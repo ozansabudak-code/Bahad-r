@@ -265,6 +265,7 @@ class ActivityLogger:
         self.machine_name = socket.gethostname()
         self.session_start = datetime.datetime.now()
         self.log_file = f"activity_logs_{datetime.date.today()}.json"
+        self.excel_log_path = r"X:\01.Public\TEDARİKÇİ PERFORMANS\LOGKAYIT\Log Kayıtları.xlsx"
         self.activity_data = defaultdict(lambda: {
             'clicks': 0,
             'first_access': None,
@@ -304,6 +305,9 @@ class ActivityLogger:
         
         # Save to JSON file
         self._save_to_file()
+        
+        # Save to Excel file
+        self._save_to_excel(event_data)
         
     def log_page_visit(self, page_name):
         """Sayfa ziyareti loglama"""
@@ -372,6 +376,86 @@ class ActivityLogger:
             
         except Exception as e:
             logging.error(f"Log dosyasına yazma hatası: {str(e)}")
+    
+    def _save_to_excel(self, event_data):
+        """Log verilerini Excel dosyasına kaydet"""
+        try:
+            from openpyxl import load_workbook, Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            
+            # Dizin yoksa oluştur
+            excel_dir = os.path.dirname(self.excel_log_path)
+            if not os.path.exists(excel_dir):
+                try:
+                    os.makedirs(excel_dir)
+                except:
+                    pass  # Ağ yolu olabilir, hata görmezden gel
+            
+            # Excel dosyasını aç veya oluştur
+            if os.path.exists(self.excel_log_path):
+                try:
+                    wb = load_workbook(self.excel_log_path)
+                    if "Log Kayıtları" in wb.sheetnames:
+                        ws = wb["Log Kayıtları"]
+                    else:
+                        ws = wb.create_sheet("Log Kayıtları")
+                        # Başlık satırını ekle
+                        ws.append(["Tarih/Saat", "Kullanıcı", "Makine", "İşlem Tipi", "Sayfa", "Detaylar"])
+                        # Başlık formatı
+                        for cell in ws[1]:
+                            cell.font = Font(bold=True, color="FFFFFF")
+                            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                            cell.alignment = Alignment(horizontal="center", vertical="center")
+                except Exception as e:
+                    # Dosya kilitli olabilir, yeni workbook oluştur
+                    logging.warning(f"Excel dosyası açılamadı, yeni oluşturuluyor: {str(e)}")
+                    wb = Workbook()
+                    ws = wb.active
+                    ws.title = "Log Kayıtları"
+                    ws.append(["Tarih/Saat", "Kullanıcı", "Makine", "İşlem Tipi", "Sayfa", "Detaylar"])
+                    for cell in ws[1]:
+                        cell.font = Font(bold=True, color="FFFFFF")
+                        cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Log Kayıtları"
+                # Başlık satırı
+                ws.append(["Tarih/Saat", "Kullanıcı", "Makine", "İşlem Tipi", "Sayfa", "Detaylar"])
+                for cell in ws[1]:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Yeni log kaydını ekle
+            ws.append([
+                event_data['timestamp'],
+                event_data['user'],
+                event_data['machine'],
+                event_data['event_type'],
+                event_data['page'],
+                event_data['details']
+            ])
+            
+            # Sütun genişliklerini ayarla
+            ws.column_dimensions['A'].width = 20  # Tarih/Saat
+            ws.column_dimensions['B'].width = 15  # Kullanıcı
+            ws.column_dimensions['C'].width = 15  # Makine
+            ws.column_dimensions['D'].width = 20  # İşlem Tipi
+            ws.column_dimensions['E'].width = 25  # Sayfa
+            ws.column_dimensions['F'].width = 50  # Detaylar
+            
+            # Kaydet
+            wb.save(self.excel_log_path)
+            
+        except Exception as e:
+            # Excel kaydetme hatası - sessizce devam et
+            logging.warning(f"Excel log kaydedilemedi: {str(e)}")
+    
+    def log_activity(self, details, page=None):
+        """Genel aktivite loglama - kısa yol"""
+        self.log_event("ACTIVITY", details, page)
     
     def get_session_duration(self):
         """Oturum süresini hesapla"""
