@@ -4551,7 +4551,7 @@ def show_scorecard():
     tree_r.column("Stok Grubu", width=120, anchor="w")
     tree_r.pack(fill="both", expand=True)
 
-    if not detay_rows.empty and stok_grup_col_global:
+    if not detay_rows.empty and stok_grup_col_global and stok_grup_col_global in detay_rows.columns:
         fiyat_col = find_col_by_keywords(detay_rows, ['fiyat','price'])
         teslim_col = find_col_by_keywords(detay_rows, ['teslim','delivery'])
         iade_col = find_col_by_keywords(detay_rows, ['iade','return'])
@@ -4586,7 +4586,7 @@ def show_scorecard():
         tree_calc.heading(col, text=col)
         tree_calc.column(col, anchor="center")
     
-    if not detay_rows.empty and stok_grup_col_global:
+    if not detay_rows.empty and stok_grup_col_global and stok_grup_col_global in detay_rows.columns:
         for idx, r in detay_rows.iterrows():
             tree_calc.insert("", "end", values=(
                 r[stok_grup_col_global],
@@ -4602,7 +4602,7 @@ def show_scorecard():
     logic_frame.pack(fill="x", padx=20, pady=10)
     
     logic_text = ""
-    if not detay_rows.empty and stok_grup_col_global:
+    if not detay_rows.empty and stok_grup_col_global and stok_grup_col_global in detay_rows.columns:
         r = detay_rows.iloc[0]  # İlk satırı örnek olarak al
         fiyat_col = find_col_by_keywords(detay_rows, ['fiyat','price'])
         teslim_col = find_col_by_keywords(detay_rows, ['teslim','delivery'])
