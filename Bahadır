@@ -6498,7 +6498,7 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         if stok_grup_col:
             # Pazar ortalamaları (kıyaslama için)
             market_averages_global = df_analiz.groupby(stok_grup_col)[[fiyat_col, teslim_col, iade_col]].mean()
-            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring)
+            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring, include_groups=False)
         else:
             sonuc_grouped = apply_scoring(sonuc_grouped)
 
