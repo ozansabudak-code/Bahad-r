@@ -4638,7 +4638,8 @@ def show_scorecard():
     
     def fetch_comment():
         comment = get_scorecard_ai_comment(row, grade, description)
-        ai_lbl.configure(text=comment)
+        # Use after() to update GUI from main thread (Tkinter is not thread-safe)
+        ai_lbl.after(0, lambda: ai_lbl.configure(text=comment))
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 def export_scorecard_pdf():
@@ -4650,26 +4651,39 @@ def export_scorecard_pdf():
     pdf = FPDF()
     pdf.add_page()
     
+    # Try to use Unicode font for Turkish characters
+    use_unicode = False
     if os.path.exists('DejaVuSans.ttf'):
-        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-        pdf.set_font('DejaVu', '', 14)
-    else:
+        try:
+            pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+            pdf.set_font('DejaVu', '', 14)
+            use_unicode = True
+        except:
+            pass
+    
+    if not use_unicode:
+        # Fallback to Arial and transliterate Turkish characters
         pdf.set_font("Arial", size=12)
+        supplier_name = transliterate_turkish(supplier_name)
+        desc = transliterate_turkish(desc)
         
-    pdf.cell(0, 10, f"TEDARİKÇİ KARNESİ: {supplier_name}", ln=True, align='C')
+    pdf.cell(0, 10, f"TEDARIKCI KARNESI: {supplier_name}", ln=True, align='C')
     pdf.ln(10)
     
     pdf.set_font_size(20)
     pdf.cell(0, 10, f"GENEL NOT: {grade}", ln=True, align='C')
     pdf.set_font_size(12)
-    pdf.cell(0, 10, f"Açıklama: {desc}", ln=True, align='C')
+    pdf.cell(0, 10, f"Aciklama: {desc}", ln=True, align='C')
     pdf.cell(0, 10, f"Performans Skoru: {row['Skor']:.2f}", ln=True, align='C')
-    pdf.cell(0, 10, f"ABC Sinifi (Pareto): {row.get('Pareto_Sinifi', '-')}", ln=True, align='C')
+    pareto_val = row.get('Pareto_Sinifi', '-')
+    if not use_unicode:
+        pareto_val = transliterate_turkish(str(pareto_val))
+    pdf.cell(0, 10, f"ABC Sinifi (Pareto): {pareto_val}", ln=True, align='C')
     pdf.ln(20)
     
     col_width = 45
     pdf.cell(col_width, 10, "Kriter", 1)
-    pdf.cell(col_width, 10, "Değer", 1)
+    pdf.cell(col_width, 10, "Deger", 1)
     pdf.ln()
     
     metrics = {
@@ -4680,6 +4694,9 @@ def export_scorecard_pdf():
     }
     
     for k, v in metrics.items():
+        if not use_unicode:
+            k = transliterate_turkish(k)
+            v = transliterate_turkish(str(v))
         pdf.cell(col_width, 10, k, 1)
         pdf.cell(col_width, 10, str(v), 1)
         pdf.ln()
@@ -4687,7 +4704,7 @@ def export_scorecard_pdf():
     filename = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile=f"Karne_{supplier_name}.pdf")
     if filename:
         pdf.output(filename)
-        messagebox.showinfo("Başarılı", "PDF kaydedildi.")
+        messagebox.showinfo("Basarili", "PDF kaydedildi.")
 
 # ---------- TREND ANALİZİ VE AI ----------
 def get_trend_ai_comment(trend_data_str):
@@ -6255,6 +6272,19 @@ def find_col_by_keywords(df, keywords):
     for col in df.columns:
         if any(k in str(col).lower() for k in keywords): return col
     return None
+
+def transliterate_turkish(text):
+    """Convert Turkish characters to ASCII equivalents for PDF compatibility."""
+    if not isinstance(text, str):
+        return str(text)
+    turkish_map = {
+        'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
+        'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S',
+        'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
+    }
+    for turkish, ascii_char in turkish_map.items():
+        text = text.replace(turkish, ascii_char)
+    return text
 
 def ask_user_to_pick_column(cols):
     win = tk.Toplevel(); win.title("Kolon Seç"); tk.Label(win, text="Seçim yapın:").pack()
