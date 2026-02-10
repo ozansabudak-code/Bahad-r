@@ -7551,60 +7551,297 @@ def send_compliance_email(supplier_email, supplier_name, compliance_data, ai_mes
 # ========== END OF AI HELPER FUNCTIONS ==========
 
 def init_compliance_center_tab():
-    """Tedarikçi Uyumluluk Merkezi - Manuel Tedarikçi Bilgi Girişi ve AI Yorumu"""
+    """Tedarikçi Uyumluluk Merkezi - Tabbed Interface with Supplier List, Manual Entry, and Certificate Tracking"""
     from datetime import datetime
     import openpyxl
     from openpyxl import load_workbook, Workbook
+    import glob
     
     for widget in frame_compliance.winfo_children():
         widget.destroy()
     
     # Başlık
-    header = tk.Frame(frame_compliance, bg="#2c3e50", padx=20, pady=20)
+    header = tk.Frame(frame_compliance, bg="#2c3e50", padx=20, pady=15)
     header.pack(fill="x")
-    tk.Label(header, text="🏛️ Tedarikçi Uyumluluk Merkezi", font=("Segoe UI", 20, "bold"), 
+    tk.Label(header, text="🏛️ Tedarikçi Uyumluluk Merkezi", font=("Segoe UI", 18, "bold"), 
              fg="white", bg="#2c3e50").pack(anchor="w")
-    tk.Label(header, text="Manuel Tedarikçi Bilgi Girişi ve AI Yorumu", 
-             font=("Segoe UI", 11), fg="#ecf0f1", bg="#2c3e50").pack(anchor="w")
-    
-    # Scrollable canvas container
-    canvas_container = tk.Frame(frame_compliance)
-    canvas_container.pack(fill="both", expand=True)
-    
-    # Canvas and scrollbar
-    canvas = tk.Canvas(canvas_container, bg="#ecf0f1", highlightthickness=0)
-    scrollbar = ttk.Scrollbar(canvas_container, orient="vertical", command=canvas.yview)
-    
-    # Frame inside canvas
-    content = tk.Frame(canvas, padx=15, pady=15, bg="#ecf0f1")
-    
-    # Configure scrolling
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
-    
-    # Create window in canvas
-    canvas_frame = canvas.create_window((0, 0), window=content, anchor="nw")
-    
-    # Update scrollregion when content changes
-    def on_frame_configure(event=None):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.itemconfig(canvas_frame, width=canvas.winfo_width())
-    
-    content.bind("<Configure>", on_frame_configure)
-    canvas.bind("<Configure>", on_frame_configure)
-    
-    # Mouse wheel scrolling
-    def on_mousewheel(event):
-        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-    
-    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    tk.Label(header, text="Tedarikçi Listesi, Manuel Giriş ve Sertifika Takibi", 
+             font=("Segoe UI", 10), fg="#ecf0f1", bg="#2c3e50").pack(anchor="w")
     
     # Excel file path
     EXCEL_FILE_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Cari Bilgiler\Sertifika Durumu Trafik ışığı.xlsx"
     
+    # Create Notebook (Tabbed Interface)
+    notebook = ttk.Notebook(frame_compliance)
+    notebook.pack(fill="both", expand=True, padx=5, pady=5)
+    
+    # ==================== TAB 1: TEDARİKÇİ LİSTESİ VE AI YORUM ====================
+    tab_list = tk.Frame(notebook, bg="#ecf0f1")
+    notebook.add(tab_list, text=" 📋 Tedarikçi Listesi & Trafik Lambası ")
+    
+    # Top info panel
+    info_panel = tk.Frame(tab_list, bg="white", bd=2, relief="solid", padx=15, pady=10)
+    info_panel.pack(fill="x", padx=10, pady=10)
+    tk.Label(info_panel, text="💡 Excel'den tedarikçileri listeler. Tedarikçi seçip AI yorumu alabilirsiniz.", 
+            font=("Segoe UI", 9, "italic"), bg="white", fg="#34495e").pack()
+    
+    # Refresh button and search
+    control_frame = tk.Frame(tab_list, bg="#ecf0f1")
+    control_frame.pack(fill="x", padx=10, pady=5)
+    
+    tk.Button(control_frame, text="🔄 Listeyi Yenile", font=("Segoe UI", 10, "bold"),
+             bg="#3498db", fg="white", padx=15, pady=5,
+             command=lambda: load_suppliers_from_excel()).pack(side="left", padx=5)
+    
+    tk.Label(control_frame, text="Ara:", font=("Segoe UI", 10), bg="#ecf0f1").pack(side="left", padx=(20, 5))
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(control_frame, textvariable=search_var, font=("Segoe UI", 10), width=30)
+    search_entry.pack(side="left", padx=5)
+    search_var.trace("w", lambda *args: filter_suppliers())
+    
+    # Supplier list with traffic light colors
+    list_frame = tk.Frame(tab_list, bg="#ecf0f1")
+    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+    
+    # Treeview for suppliers
+    columns = ("Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Mail", "Eksik Evraklar", "Durum")
+    supplier_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+    
+    # Column headers
+    supplier_tree.heading("Tedarikçi Adı", text="Tedarikçi Adı")
+    supplier_tree.heading("Yetkili Kişi", text="Yetkili Kişi")
+    supplier_tree.heading("Telefon", text="Telefon")
+    supplier_tree.heading("Mail", text="Mail")
+    supplier_tree.heading("Eksik Evraklar", text="Eksik Evraklar")
+    supplier_tree.heading("Durum", text="Durum")
+    
+    # Column widths
+    supplier_tree.column("Tedarikçi Adı", width=200)
+    supplier_tree.column("Yetkili Kişi", width=150)
+    supplier_tree.column("Telefon", width=120)
+    supplier_tree.column("Mail", width=180)
+    supplier_tree.column("Eksik Evraklar", width=200)
+    supplier_tree.column("Durum", width=100)
+    
+    # Scrollbars
+    vsb = ttk.Scrollbar(list_frame, orient="vertical", command=supplier_tree.yview)
+    hsb = ttk.Scrollbar(list_frame, orient="horizontal", command=supplier_tree.xview)
+    supplier_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    
+    supplier_tree.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+    hsb.grid(row=1, column=0, sticky="ew")
+    
+    list_frame.grid_rowconfigure(0, weight=1)
+    list_frame.grid_columnconfigure(0, weight=1)
+    
+    # Traffic light tags
+    supplier_tree.tag_configure("green", background="#d5f4e6", foreground="#27ae60")
+    supplier_tree.tag_configure("yellow", background="#fcf3cf", foreground="#f39c12")
+    supplier_tree.tag_configure("red", background="#fadbd8", foreground="#c0392b")
+    
+    # AI Comment panel
+    ai_comment_frame = tk.LabelFrame(tab_list, text="🤖 Seçili Tedarikçi için AI Yorumu", 
+                                    font=("Segoe UI", 11, "bold"), bg="white", 
+                                    padx=10, pady=10)
+    ai_comment_frame.pack(fill="x", padx=10, pady=10)
+    
+    ai_comment_scrollbar = tk.Scrollbar(ai_comment_frame, orient="vertical")
+    ai_comment_scrollbar.pack(side="right", fill="y")
+    
+    ai_comment_text = tk.Text(ai_comment_frame, height=8, font=("Segoe UI", 9),
+                             wrap="word", bg="#f8f9fa", relief="solid", bd=1,
+                             yscrollcommand=ai_comment_scrollbar.set)
+    ai_comment_text.pack(side="left", fill="both", expand=True)
+    ai_comment_scrollbar.config(command=ai_comment_text.yview)
+    ai_comment_text.insert("1.0", "Tedarikçi seçip 'AI Yorum Oluştur' butonuna tıklayın...")
+    ai_comment_text.config(state="disabled")
+    
+    # Buttons for selected supplier
+    selected_btn_frame = tk.Frame(tab_list, bg="#ecf0f1")
+    selected_btn_frame.pack(fill="x", padx=10, pady=5)
+    
+    tk.Button(selected_btn_frame, text="🤖 Seçili Tedarikçi için AI Yorum Oluştur", 
+             font=("Segoe UI", 10, "bold"), bg="#9b59b6", fg="white",
+             padx=15, pady=8, command=lambda: generate_ai_for_selected()).pack(side="left", padx=5)
+    
+    def load_suppliers_from_excel():
+        """Load suppliers from Excel file"""
+        # Clear existing items
+        for item in supplier_tree.get_children():
+            supplier_tree.delete(item)
+        
+        try:
+            if os.path.exists(EXCEL_FILE_PATH):
+                wb = load_workbook(EXCEL_FILE_PATH, read_only=True)
+                if "Tedarikçi Uyumluluk" in wb.sheetnames:
+                    ws = wb["Tedarikçi Uyumluluk"]
+                    
+                    # Skip header row
+                    rows = list(ws.iter_rows(min_row=2, values_only=True))
+                    
+                    for row in rows:
+                        if row[0]:  # If supplier name exists
+                            supplier_name = str(row[0]) if row[0] else ""
+                            yetkili = str(row[1]) if row[1] else ""
+                            telefon = str(row[2]) if row[2] else ""
+                            mail = str(row[6]) if len(row) > 6 and row[6] else ""
+                            eksik_evraklar = str(row[10]) if len(row) > 10 and row[10] else ""
+                            
+                            # Determine traffic light status
+                            if eksik_evraklar and eksik_evraklar.strip():
+                                # Count missing documents
+                                missing_count = len([x for x in eksik_evraklar.split(',') if x.strip()])
+                                if missing_count > 3:
+                                    status = "🔴 Kırmızı"
+                                    tag = "red"
+                                elif missing_count > 0:
+                                    status = "🟡 Sarı"
+                                    tag = "yellow"
+                                else:
+                                    status = "🟢 Yeşil"
+                                    tag = "green"
+                            else:
+                                status = "🟢 Yeşil"
+                                tag = "green"
+                            
+                            supplier_tree.insert("", "end", values=(
+                                supplier_name, yetkili, telefon, mail, 
+                                eksik_evraklar[:50] + "..." if len(eksik_evraklar) > 50 else eksik_evraklar,
+                                status
+                            ), tags=(tag,))
+                    
+                    wb.close()
+                    messagebox.showinfo("Başarılı", f"{len(rows)} tedarikçi yüklendi!")
+                else:
+                    messagebox.showwarning("Uyarı", "Excel dosyasında 'Tedarikçi Uyumluluk' sayfası bulunamadı!")
+            else:
+                messagebox.showwarning("Uyarı", f"Excel dosyası bulunamadı:\n{EXCEL_FILE_PATH}")
+        except Exception as e:
+            messagebox.showerror("Hata", f"Excel okuma hatası:\n{str(e)}")
+    
+    def filter_suppliers():
+        """Filter suppliers based on search text"""
+        search_text = search_var.get().lower()
+        
+        # Get all items
+        for item in supplier_tree.get_children():
+            values = supplier_tree.item(item, "values")
+            # Check if search text is in any column
+            if any(search_text in str(val).lower() for val in values):
+                supplier_tree.reattach(item, "", "end")
+            else:
+                supplier_tree.detach(item)
+    
+    def generate_ai_for_selected():
+        """Generate AI comment for selected supplier"""
+        selected = supplier_tree.selection()
+        if not selected:
+            messagebox.showwarning("Uyarı", "Lütfen bir tedarikçi seçin!")
+            return
+        
+        # Get selected supplier data
+        item = selected[0]
+        values = supplier_tree.item(item, "values")
+        
+        supplier_name = values[0]
+        yetkili = values[1]
+        telefon = values[2]
+        mail = values[3]
+        eksik_evraklar = values[4]
+        durum = values[5]
+        
+        # Update AI comment text
+        ai_comment_text.config(state="normal")
+        ai_comment_text.delete("1.0", "end")
+        ai_comment_text.insert("end", "🔍 AI yorumu oluşturuluyor...\n")
+        ai_comment_text.update()
+        
+        try:
+            if GENAI_AVAILABLE and GEMINI_API_KEY:
+                import google.generativeai as genai
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel('models/gemini-2.0-flash')
+                
+                prompt = f"""Aşağıdaki tedarikçi için kısa bir değerlendirme yap:
+
+Tedarikçi Adı: {supplier_name}
+Yetkili Kişi: {yetkili}
+Telefon: {telefon}
+Mail: {mail}
+Eksik Evraklar: {eksik_evraklar if eksik_evraklar else 'Yok'}
+Durum: {durum}
+
+Lütfen:
+1. Eksik evraklara dikkat çek
+2. Uyumluluk durumunu değerlendir
+3. Kısa önerilerde bulun
+
+Türkçe ve profesyonel bir dille, maksimum 150 kelime ile yaz."""
+                
+                response = model.generate_content(prompt)
+                comment = response.text
+                
+                ai_comment_text.delete("1.0", "end")
+                ai_comment_text.insert("end", f"{'='*50}\n")
+                ai_comment_text.insert("end", f"🤖 AI DEĞERLENDİRME: {supplier_name}\n")
+                ai_comment_text.insert("end", f"{'='*50}\n\n")
+                ai_comment_text.insert("end", comment)
+            else:
+                # Fallback
+                comment = f"""📊 TEDARİKÇİ DEĞERLENDİRMESİ: {supplier_name}
+
+Durum: {durum}
+
+"""
+                if "Kırmızı" in durum:
+                    comment += "⚠️ DİKKAT: Çok sayıda eksik evrak var! Acil önlem alınmalı.\n\n"
+                elif "Sarı" in durum:
+                    comment += "⚠️ UYARI: Eksik evraklar mevcut. Takip edilmeli.\n\n"
+                else:
+                    comment += "✅ İYİ DURUM: Eksik evrak yok.\n\n"
+                
+                if eksik_evraklar:
+                    comment += f"Eksik Evraklar: {eksik_evraklar}\n\n"
+                
+                comment += "📌 ÖNERİ: Düzenli kontrol yapılmalı."
+                
+                ai_comment_text.delete("1.0", "end")
+                ai_comment_text.insert("end", comment)
+        
+        except Exception as e:
+            ai_comment_text.delete("1.0", "end")
+            ai_comment_text.insert("end", f"❌ Hata: {str(e)}")
+        
+        ai_comment_text.config(state="disabled")
+    
+    # Initial load
+    load_suppliers_from_excel()
+    
+    # ==================== TAB 2: MANUEL GİRİŞ ====================
+    tab_manual = tk.Frame(notebook, bg="white")
+    notebook.add(tab_manual, text=" 📝 Manuel Giriş ")
+    
+    # Scrollable canvas for manual entry
+    canvas_manual = tk.Canvas(tab_manual, bg="#ecf0f1", highlightthickness=0)
+    scrollbar_manual = ttk.Scrollbar(tab_manual, orient="vertical", command=canvas_manual.yview)
+    content_manual = tk.Frame(canvas_manual, padx=15, pady=15, bg="#ecf0f1")
+    
+    canvas_manual.configure(yscrollcommand=scrollbar_manual.set)
+    canvas_manual.pack(side="left", fill="both", expand=True)
+    scrollbar_manual.pack(side="right", fill="y")
+    
+    canvas_frame_manual = canvas_manual.create_window((0, 0), window=content_manual, anchor="nw")
+    
+    def on_frame_configure_manual(event=None):
+        canvas_manual.configure(scrollregion=canvas_manual.bbox("all"))
+        canvas_manual.itemconfig(canvas_frame_manual, width=canvas_manual.winfo_width())
+    
+    content_manual.bind("<Configure>", on_frame_configure_manual)
+    canvas_manual.bind("<Configure>", on_frame_configure_manual)
+    
     # Manuel giriş formu
-    form_panel = tk.LabelFrame(content, text="📝 Tedarikçi Bilgileri Girişi", 
+    form_panel = tk.LabelFrame(content_manual, text="📝 Tedarikçi Bilgileri Girişi", 
                                font=("Segoe UI", 13, "bold"), bg="white", fg="#3498db",
                                padx=20, pady=20, relief="solid", bd=2)
     form_panel.pack(fill="x", pady=(0, 15))
@@ -7636,7 +7873,6 @@ def init_compliance_center_tab():
                  bg="white", anchor="w").grid(row=row, column=col, sticky="w", padx=5, pady=8)
         
         if field_name == "Eksik Evraklar":
-            # Text widget for multiline input
             entry = tk.Text(form_panel, font=("Segoe UI", 10), width=35, height=3, wrap="word")
             entry.grid(row=row, column=col+1, padx=5, pady=8, sticky="ew")
         else:
@@ -7645,33 +7881,29 @@ def init_compliance_center_tab():
         
         form_fields[field_name] = entry
     
-    # Grid configuration
     form_panel.grid_columnconfigure(1, weight=1)
     form_panel.grid_columnconfigure(3, weight=1)
     
-    # AI Yorum alanı
-    ai_panel = tk.LabelFrame(content, text="🤖 AI Yorumu", 
+    # AI Yorum alanı (manuel giriş için)
+    ai_panel_manual = tk.LabelFrame(content_manual, text="🤖 AI Yorumu", 
                             font=("Segoe UI", 13, "bold"), bg="white", fg="#9b59b6",
                             padx=20, pady=15, relief="solid", bd=2)
-    ai_panel.pack(fill="both", expand=True, pady=(0, 15))
+    ai_panel_manual.pack(fill="both", expand=True, pady=(0, 15))
     
-    # AI yorum gösterim alanı
-    ai_scrollbar = tk.Scrollbar(ai_panel, orient="vertical")
-    ai_scrollbar.pack(side="right", fill="y")
+    ai_scrollbar_manual = tk.Scrollbar(ai_panel_manual, orient="vertical")
+    ai_scrollbar_manual.pack(side="right", fill="y")
     
-    ai_text = tk.Text(ai_panel, height=10, font=("Segoe UI", 10),
+    ai_text_manual = tk.Text(ai_panel_manual, height=10, font=("Segoe UI", 10),
                      wrap="word", bg="#f8f9fa", relief="solid", bd=1,
-                     yscrollcommand=ai_scrollbar.set)
-    ai_text.pack(side="left", fill="both", expand=True)
-    ai_scrollbar.config(command=ai_text.yview)
+                     yscrollcommand=ai_scrollbar_manual.set)
+    ai_text_manual.pack(side="left", fill="both", expand=True)
+    ai_scrollbar_manual.config(command=ai_text_manual.yview)
     
-    # AI yorum placeholder
-    ai_text.insert("1.0", "AI yorumu için 'AI Yorum Oluştur' butonuna tıklayın...")
-    ai_text.config(state="disabled")
+    ai_text_manual.insert("1.0", "AI yorumu için 'AI Yorum Oluştur' butonuna tıklayın...")
+    ai_text_manual.config(state="disabled")
     
-    def generate_ai_comment():
-        """AI ile yorum oluştur"""
-        # Form verilerini topla
+    def generate_ai_comment_manual():
+        """AI ile yorum oluştur (manuel giriş için)"""
         data = {}
         for field_name, widget in form_fields.items():
             if isinstance(widget, tk.Text):
@@ -7679,16 +7911,14 @@ def init_compliance_center_tab():
             else:
                 data[field_name] = widget.get().strip()
         
-        # En az tedarikçi adı olmalı
         if not data.get("Tedarikçi Adı"):
             messagebox.showwarning("Uyarı", "Lütfen en az Tedarikçi Adı girin!")
             return
         
-        # AI yorumu oluştur
-        ai_text.config(state="normal")
-        ai_text.delete("1.0", "end")
-        ai_text.insert("end", "🔍 AI yorumu oluşturuluyor...\n")
-        ai_text.update()
+        ai_text_manual.config(state="normal")
+        ai_text_manual.delete("1.0", "end")
+        ai_text_manual.insert("end", "🔍 AI yorumu oluşturuluyor...\n")
+        ai_text_manual.update()
         
         try:
             if GENAI_AVAILABLE and GEMINI_API_KEY:
@@ -7696,7 +7926,6 @@ def init_compliance_center_tab():
                 genai.configure(api_key=GEMINI_API_KEY)
                 model = genai.GenerativeModel('models/gemini-2.0-flash')
                 
-                # Prompt oluştur
                 prompt = f"""Aşağıdaki tedarikçi bilgilerine dayanarak kısa bir değerlendirme ve yorum yap:
 
 Tedarikçi Adı: {data.get('Tedarikçi Adı', 'Belirtilmemiş')}
@@ -7722,18 +7951,17 @@ Türkçe ve profesyonel bir dille yaz."""
                 response = model.generate_content(prompt)
                 comment = response.text
                 
-                ai_text.delete("1.0", "end")
-                ai_text.insert("end", f"{'='*60}\n")
-                ai_text.insert("end", f"🤖 AI DEĞERLENDİRME\n")
-                ai_text.insert("end", f"{'='*60}\n\n")
-                ai_text.insert("end", comment)
-                ai_text.insert("end", f"\n\n{'='*60}\n")
-                ai_text.insert("end", f"⚠️ NOT: Bu yorum Excel'e kaydedilmeyecektir.\n")
-                ai_text.insert("end", f"{'='*60}\n")
+                ai_text_manual.delete("1.0", "end")
+                ai_text_manual.insert("end", f"{'='*60}\n")
+                ai_text_manual.insert("end", f"🤖 AI DEĞERLENDİRME\n")
+                ai_text_manual.insert("end", f"{'='*60}\n\n")
+                ai_text_manual.insert("end", comment)
+                ai_text_manual.insert("end", f"\n\n{'='*60}\n")
+                ai_text_manual.insert("end", f"⚠️ NOT: Bu yorum Excel'e kaydedilmeyecektir.\n")
+                ai_text_manual.insert("end", f"{'='*60}\n")
             else:
-                # Fallback: Basit bir yorum oluştur
                 comment = f"""TEDARİKÇİ DEĞERLENDİRMESİ
-                
+
 Tedarikçi: {data.get('Tedarikçi Adı')}
 Yetkili: {data.get('Yetkili Kişi', 'Belirtilmemiş')}
 
@@ -7752,22 +7980,20 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
 - İletişim bilgilerinin güncel olduğundan emin olun
 - Uyumluluk belgelerini periyodik olarak kontrol edin
 
-⚠️ NOT: Bu yorum Excel'e kaydedilmeyecektir.
-"""
+⚠️ NOT: Bu yorum Excel'e kaydedilmeyecektir."""
                 
-                ai_text.delete("1.0", "end")
-                ai_text.insert("end", comment)
+                ai_text_manual.delete("1.0", "end")
+                ai_text_manual.insert("end", comment)
         
         except Exception as e:
-            ai_text.delete("1.0", "end")
-            ai_text.insert("end", f"❌ Hata oluştu: {str(e)}\n\n")
-            ai_text.insert("end", "Lütfen API anahtarınızı kontrol edin veya tekrar deneyin.")
+            ai_text_manual.delete("1.0", "end")
+            ai_text_manual.insert("end", f"❌ Hata oluştu: {str(e)}\n\n")
+            ai_text_manual.insert("end", "Lütfen API anahtarınızı kontrol edin veya tekrar deneyin.")
         
-        ai_text.config(state="disabled")
+        ai_text_manual.config(state="disabled")
     
     def save_to_excel():
         """Form verilerini Excel'e kaydet (AI yorumu hariç)"""
-        # Form verilerini topla
         data = {}
         for field_name, widget in form_fields.items():
             if isinstance(widget, tk.Text):
@@ -7775,36 +8001,30 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
             else:
                 data[field_name] = widget.get().strip()
         
-        # Tedarikçi adı zorunlu
         if not data.get("Tedarikçi Adı"):
             messagebox.showwarning("Uyarı", "Tedarikçi Adı zorunludur!")
             return
         
         try:
-            # Excel dosyasını aç veya oluştur
             if os.path.exists(EXCEL_FILE_PATH):
                 wb = load_workbook(EXCEL_FILE_PATH)
                 if "Tedarikçi Uyumluluk" in wb.sheetnames:
                     ws = wb["Tedarikçi Uyumluluk"]
                 else:
                     ws = wb.create_sheet("Tedarikçi Uyumluluk")
-                    # Başlıkları ekle
                     headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", 
                               "Alım Türü", "Tür", "Mail", "Başlangıç Tarihi", 
                               "Bitiş Tarihi", "Kayıt Tarihi", "Eksik Evraklar"]
                     ws.append(headers)
             else:
-                # Dosya yoksa oluştur
                 wb = Workbook()
                 ws = wb.active
                 ws.title = "Tedarikçi Uyumluluk"
-                # Başlıkları ekle
                 headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", 
                           "Alım Türü", "Tür", "Mail", "Başlangıç Tarihi", 
                           "Bitiş Tarihi", "Kayıt Tarihi", "Eksik Evraklar"]
                 ws.append(headers)
             
-            # Veriyi ekle
             row_data = [
                 data.get("Tedarikçi Adı", ""),
                 data.get("Yetkili Kişi", ""),
@@ -7820,14 +8040,15 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
             ]
             ws.append(row_data)
             
-            # Kaydet
             wb.save(EXCEL_FILE_PATH)
             messagebox.showinfo("Başarılı", f"Veriler başarıyla kaydedildi!\n\nDosya: {EXCEL_FILE_PATH}")
             
-            # Activity log
             if activity_logger:
                 activity_logger.log_activity(f"Tedarikçi kaydedildi: {data.get('Tedarikçi Adı')}", 
                                             "Tedarikçi Uyumluluk")
+            
+            # Refresh the list in tab 1
+            load_suppliers_from_excel()
         
         except Exception as e:
             messagebox.showerror("Hata", f"Excel'e kaydetme hatası:\n{str(e)}")
@@ -7840,30 +8061,30 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
             else:
                 widget.delete(0, tk.END)
         
-        ai_text.config(state="normal")
-        ai_text.delete("1.0", "end")
-        ai_text.insert("1.0", "AI yorumu için 'AI Yorum Oluştur' butonuna tıklayın...")
-        ai_text.config(state="disabled")
+        ai_text_manual.config(state="normal")
+        ai_text_manual.delete("1.0", "end")
+        ai_text_manual.insert("1.0", "AI yorumu için 'AI Yorum Oluştur' butonuna tıklayın...")
+        ai_text_manual.config(state="disabled")
     
     # Butonlar
-    btn_container = tk.Frame(content, bg="#ecf0f1")
-    btn_container.pack(fill="x", pady=(0, 10))
+    btn_container_manual = tk.Frame(content_manual, bg="#ecf0f1")
+    btn_container_manual.pack(fill="x", pady=(0, 10))
     
-    tk.Button(btn_container, text="💾 Kaydet", font=("Segoe UI", 11, "bold"),
+    tk.Button(btn_container_manual, text="💾 Kaydet", font=("Segoe UI", 11, "bold"),
              bg="#27ae60", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=20, pady=10, command=save_to_excel).pack(side="left", padx=5)
     
-    tk.Button(btn_container, text="🤖 AI Yorum Oluştur", font=("Segoe UI", 11, "bold"),
+    tk.Button(btn_container_manual, text="🤖 AI Yorum Oluştur", font=("Segoe UI", 11, "bold"),
              bg="#9b59b6", fg="white", relief="raised", bd=2, cursor="hand2",
-             padx=20, pady=10, command=generate_ai_comment).pack(side="left", padx=5)
+             padx=20, pady=10, command=generate_ai_comment_manual).pack(side="left", padx=5)
     
-    tk.Button(btn_container, text="🔄 Temizle", font=("Segoe UI", 11, "bold"),
+    tk.Button(btn_container_manual, text="🔄 Temizle", font=("Segoe UI", 11, "bold"),
              bg="#e67e22", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=20, pady=10, command=clear_form).pack(side="left", padx=5)
     
     # Bilgi notu
-    info_frame = tk.Frame(content, bg="white", bd=2, relief="solid", padx=15, pady=10)
-    info_frame.pack(fill="x", pady=(0, 10))
+    info_frame_manual = tk.Frame(content_manual, bg="white", bd=2, relief="solid", padx=15, pady=10)
+    info_frame_manual.pack(fill="x", pady=(0, 10))
     
     info_text = """ℹ️ KULLANIM NOTLARI:
     
@@ -7872,8 +8093,322 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
 3. "Kaydet" butonu ile sadece manuel girilen bilgiler Excel'e kaydedilir
 4. Excel dosya yolu: X:\\01.Public\\TEDARİKÇİ PERFORMANS\\Cari Bilgiler\\Sertifika Durumu Trafik ışığı.xlsx"""
     
-    tk.Label(info_frame, text=info_text, font=("Segoe UI", 9), 
+    tk.Label(info_frame_manual, text=info_text, font=("Segoe UI", 9), 
             bg="white", fg="#34495e", justify="left", anchor="w").pack(fill="x")
+    
+    # ==================== TAB 3: SERTİFİKA VE SÖZLEŞME TAKİBİ ====================
+    tab_cert = tk.Frame(notebook, bg="#ecf0f1")
+    notebook.add(tab_cert, text=" 🏆 Sertifika & Sözleşme Takibi ")
+    
+    # Scrollable canvas for certificate tracking
+    canvas_cert = tk.Canvas(tab_cert, bg="#ecf0f1", highlightthickness=0)
+    scrollbar_cert = ttk.Scrollbar(tab_cert, orient="vertical", command=canvas_cert.yview)
+    content_cert = tk.Frame(canvas_cert, padx=15, pady=15, bg="#ecf0f1")
+    
+    canvas_cert.configure(yscrollcommand=scrollbar_cert.set)
+    canvas_cert.pack(side="left", fill="both", expand=True)
+    scrollbar_cert.pack(side="right", fill="y")
+    
+    canvas_frame_cert = canvas_cert.create_window((0, 0), window=content_cert, anchor="nw")
+    
+    def on_frame_configure_cert(event=None):
+        canvas_cert.configure(scrollregion=canvas_cert.bbox("all"))
+        canvas_cert.itemconfig(canvas_frame_cert, width=canvas_cert.winfo_width())
+    
+    content_cert.bind("<Configure>", on_frame_configure_cert)
+    canvas_cert.bind("<Configure>", on_frame_configure_cert)
+    
+    # Info cards
+    info_container_cert = tk.Frame(content_cert, bg="#ecf0f1")
+    info_container_cert.pack(fill="x", pady=(0, 15))
+    
+    def create_info_card(parent, title, value, color, icon):
+        """Bilgi kartı oluştur"""
+        card = tk.Frame(parent, bg="white", bd=2, relief="solid", padx=20, pady=15)
+        card.pack(side="left", padx=5, expand=True, fill="both")
+        
+        tk.Label(card, text=icon, font=("Segoe UI", 24), bg="white", fg=color).pack()
+        tk.Label(card, text=title, font=("Segoe UI", 10), bg="white", fg="gray").pack()
+        tk.Label(card, text=value, font=("Segoe UI", 16, "bold"), bg="white", fg=color).pack()
+        
+        return card
+    
+    # Count certificates and contracts
+    cert_count = 0
+    contract_count = 0
+    
+    try:
+        if os.path.exists(MASTER_SERTIFIKA_PATH):
+            cert_files = glob.glob(os.path.join(MASTER_SERTIFIKA_PATH, "*.[pP][dD][fF]"))
+            cert_count = len(cert_files)
+    except Exception as e:
+        print(f"Sertifika klasörü okuma hatası: {e}")
+    
+    try:
+        if os.path.exists(MASTER_SOZLESME_PATH):
+            contract_files = glob.glob(os.path.join(MASTER_SOZLESME_PATH, "*.[pP][dD][fF]"))
+            contract_count = len(contract_files)
+    except Exception as e:
+        print(f"Sözleşme klasörü okuma hatası: {e}")
+    
+    total_docs = cert_count + contract_count
+    
+    # Info cards
+    create_info_card(info_container_cert, "Toplam Belge", str(total_docs), "#3498db", "📄")
+    create_info_card(info_container_cert, "Sertifikalar", str(cert_count), "#27ae60", "🏆")
+    create_info_card(info_container_cert, "Sözleşmeler", str(contract_count), "#e74c3c", "📝")
+    
+    # Fire Satış Kontrol Paneli
+    fire_panel = tk.LabelFrame(content_cert, text="🔥 Fire Satış Çevre Uyumluluk Kontrolü", 
+                               font=("Segoe UI", 13, "bold"), bg="white", fg="#e67e22",
+                               padx=15, pady=15, relief="solid", bd=2)
+    fire_panel.pack(fill="x", pady=(0, 15))
+    
+    # Control form
+    form_frame_cert = tk.Frame(fire_panel, bg="white")
+    form_frame_cert.pack(fill="x", pady=10)
+    
+    tk.Label(form_frame_cert, text="Tedarikçi Adı:", font=("Segoe UI", 10, "bold"),
+             bg="white").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+    
+    supplier_entry = tk.Entry(form_frame_cert, font=("Segoe UI", 10), width=30)
+    supplier_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+    
+    tk.Label(form_frame_cert, text="Tedarikçi Email:", font=("Segoe UI", 10, "bold"),
+             bg="white").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+    
+    email_entry = tk.Entry(form_frame_cert, font=("Segoe UI", 10), width=30)
+    email_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+    
+    form_frame_cert.grid_columnconfigure(1, weight=1)
+    
+    # Result area
+    result_frame_cert = tk.Frame(fire_panel, bg="white")
+    result_frame_cert.pack(fill="both", expand=True, pady=10)
+    
+    result_scrollbar_cert = tk.Scrollbar(result_frame_cert, orient="vertical")
+    result_scrollbar_cert.pack(side="right", fill="y")
+    
+    result_text_cert = tk.Text(result_frame_cert, height=12, width=80, font=("Consolas", 9),
+                         wrap="word", bg="#f8f9fa", relief="solid", bd=1,
+                         yscrollcommand=result_scrollbar_cert.set)
+    result_text_cert.pack(side="left", fill="both", expand=True)
+    
+    result_scrollbar_cert.config(command=result_text_cert.yview)
+    
+    def check_fire_compliance():
+        """Fire satış uyumluluk kontrolü yap"""
+        supplier = supplier_entry.get().strip()
+        if not supplier:
+            messagebox.showwarning("Uyarı", "Lütfen tedarikçi adı girin!")
+            return
+        
+        result_text_cert.delete("1.0", "end")
+        result_text_cert.insert("end", "🔍 Kontrol ediliyor...\n\n")
+        result_text_cert.update()
+        
+        # Uyumluluk kontrolü
+        compliance = check_waste_disposal_compliance(supplier)
+        
+        # Sonuçları göster
+        result_text_cert.delete("1.0", "end")
+        result_text_cert.insert("end", f"{'='*60}\n")
+        result_text_cert.insert("end", f"🏛️ FIRE SATIŞ ÇEVRE UYUMLULUK RAPORU\n")
+        result_text_cert.insert("end", f"{'='*60}\n\n")
+        
+        result_text_cert.insert("end", f"Tedarikçi: {compliance['supplier']}\n")
+        result_text_cert.insert("end", f"Uyumluluk Skoru: %{compliance['score']}\n")
+        result_text_cert.insert("end", f"Durum: {'✅ TAM UYUMLU' if compliance['score'] == 100 else '⚠️ EKSİKLER VAR'}\n\n")
+        
+        result_text_cert.insert("end", "📋 Gerekli Belgeler Durumu:\n")
+        result_text_cert.insert("end", f"{'-'*60}\n")
+        
+        docs_turkish = {
+            "cevre_izin": "Çevre İzin ve Lisans Belgesi",
+            "atik_kodlari": "Atık Kodları Lisansı (200111)",
+            "uatf": "UATF (Ulusal Atık Taşıma Formu)",
+            "tartim": "Tartım Fişi / Kantar Belgesi",
+            "geri_kazanim": "Geri Kazanım Belgesi (R12)"
+        }
+        
+        missing_docs = []
+        for doc_key, doc_name in docs_turkish.items():
+            status = compliance['documents'][doc_key]
+            status_icon = "✅" if status else "❌"
+            result_text_cert.insert("end", f"{status_icon} {doc_name} - {'MEVCUT' if status else 'EKSİK'}\n")
+            if not status:
+                missing_docs.append(doc_name)
+        
+        if missing_docs:
+            result_text_cert.insert("end", f"\n⚠️ Eksik Belgeler ({len(missing_docs)}):\n")
+            for doc in missing_docs:
+                result_text_cert.insert("end", f"  • {doc}\n")
+        
+        if compliance['found_files']:
+            result_text_cert.insert("end", f"\n✅ Bulunan Belgeler ({len(compliance['found_files'])}):\n")
+            for doc_name, doc_path in compliance['found_files']:
+                result_text_cert.insert("end", f"  • {doc_name}: {os.path.basename(doc_path)}\n")
+        else:
+            result_text_cert.insert("end", f"\n⚠️ Hiçbir belge bulunamadı!\n")
+            result_text_cert.insert("end", f"Tedarikçi adının dosya adlarında geçtiğinden emin olun.\n")
+        
+        result_text_cert.insert("end", f"\n{'='*60}\n")
+        
+        globals()['last_compliance_check'] = compliance
+    
+    def send_email():
+        """Tedarikçiye email gönder"""
+        supplier = supplier_entry.get().strip()
+        email = email_entry.get().strip()
+        
+        if not supplier or not email:
+            messagebox.showwarning("Uyarı", "Lütfen tedarikçi adı ve email girin!")
+            return
+        
+        if 'last_compliance_check' not in globals():
+            messagebox.showwarning("Uyarı", "Lütfen önce uyumluluk kontrolü yapın!")
+            return
+        
+        compliance_data = globals()['last_compliance_check']
+        ai_msg = "Lütfen eksik belgeleri en kısa sürede tamamlayınız." if compliance_data['score'] < 100 else "Tüm belgeleriniz eksiksizdir."
+        
+        success, message = send_compliance_email(email, supplier, compliance_data, ai_msg)
+        
+        if success:
+            messagebox.showinfo("Başarılı", message)
+        else:
+            messagebox.showerror("Hata", message)
+    
+    # Buttons
+    btn_container_cert = tk.Frame(fire_panel, bg="white")
+    btn_container_cert.pack(fill="x", pady=(0, 5))
+    
+    tk.Button(btn_container_cert, text="🔍 Uyumluluk Kontrolü Yap", font=("Segoe UI", 10, "bold"),
+             bg="#3498db", fg="white", relief="raised", bd=2, cursor="hand2",
+             padx=15, pady=8, command=check_fire_compliance).pack(side="left", padx=5)
+    
+    tk.Button(btn_container_cert, text="📧 Tedarikçiye Email Gönder", font=("Segoe UI", 10, "bold"),
+             bg="#e67e22", fg="white", relief="raised", bd=2, cursor="hand2",
+             padx=15, pady=8, command=send_email).pack(side="left", padx=5)
+    
+    # Document sections grid
+    main_grid_cert = tk.Frame(content_cert, bg="#ecf0f1")
+    main_grid_cert.pack(fill="both", expand=True)
+    main_grid_cert.grid_columnconfigure(0, weight=1)
+    main_grid_cert.grid_columnconfigure(1, weight=1)
+    
+    def create_document_section(parent, title, path, color, icon, column):
+        """Belge bölümü oluştur"""
+        section_frame = tk.LabelFrame(
+            parent,
+            text=f"{icon} {title}",
+            font=("Segoe UI", 13, "bold"),
+            bg="white",
+            fg=color,
+            padx=12,
+            pady=12,
+            relief="solid",
+            bd=2
+        )
+        section_frame.grid(row=0, column=column, padx=5, pady=5, sticky="nsew")
+        
+        scroll_container = tk.Frame(section_frame, bg="white")
+        scroll_container.pack(fill="both", expand=True)
+        
+        doc_canvas = tk.Canvas(scroll_container, bg="white", highlightthickness=0, height=300)
+        doc_scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=doc_canvas.yview)
+        scrollable_frame = tk.Frame(doc_canvas, bg="white")
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: doc_canvas.configure(scrollregion=doc_canvas.bbox("all"))
+        )
+        
+        doc_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        doc_canvas.configure(yscrollcommand=doc_scrollbar.set)
+        
+        doc_canvas.pack(side="left", fill="both", expand=True)
+        doc_scrollbar.pack(side="right", fill="y")
+        
+        if not os.path.exists(path):
+            tk.Label(scrollable_frame, 
+                    text=f"⚠️ Klasör bulunamadı:\n{path}",
+                    font=("Segoe UI", 9),
+                    fg="#e74c3c",
+                    bg="white",
+                    justify="left",
+                    wraplength=300).pack(pady=20, padx=10)
+            return
+        
+        try:
+            pdf_files = sorted(glob.glob(os.path.join(path, "*.[pP][dD][fF]")))
+            
+            if not pdf_files:
+                tk.Label(scrollable_frame, 
+                        text="📭 Henüz belge bulunmuyor",
+                        font=("Segoe UI", 10),
+                        fg="gray",
+                        bg="white").pack(pady=20)
+            else:
+                for pdf_file in pdf_files:
+                    file_name = os.path.basename(pdf_file)
+                    file_size = os.path.getsize(pdf_file)
+                    file_size_kb = file_size / 1024
+                    file_mtime = datetime.fromtimestamp(os.path.getmtime(pdf_file))
+                    
+                    file_card = tk.Frame(scrollable_frame, bg="#f8f9fa", bd=1, relief="solid", padx=10, pady=8)
+                    file_card.pack(fill="x", pady=3, padx=5)
+                    
+                    name_label = tk.Label(file_card, text=f"📄 {file_name}", 
+                                         font=("Segoe UI", 9, "bold"),
+                                         bg="#f8f9fa", fg="#2c3e50",
+                                         anchor="w")
+                    name_label.pack(fill="x")
+                    
+                    info_text = f"📏 {file_size_kb:.1f} KB  |  📅 {file_mtime.strftime('%d.%m.%Y %H:%M')}"
+                    info_label = tk.Label(file_card, text=info_text,
+                                         font=("Segoe UI", 8),
+                                         bg="#f8f9fa", fg="gray",
+                                         anchor="w")
+                    info_label.pack(fill="x")
+                    
+                    btn_frame = tk.Frame(file_card, bg="#f8f9fa")
+                    btn_frame.pack(fill="x", pady=(5, 0))
+                    
+                    def open_file(filepath=pdf_file):
+                        try:
+                            import subprocess
+                            if os.name == 'nt':
+                                os.startfile(filepath)
+                            elif os.name == 'posix':
+                                subprocess.call(['open', filepath])
+                            if activity_logger:
+                                activity_logger.log_activity(f"Belge açıldı: {os.path.basename(filepath)}", 
+                                                            "Tedarikçi Uyumluluk")
+                        except Exception as e:
+                            messagebox.showerror("Hata", f"Dosya açılırken hata oluştu:\n{str(e)}")
+                    
+                    open_btn = tk.Button(btn_frame, text="📂 Aç", 
+                                        font=("Segoe UI", 8),
+                                        bg=color, fg="white",
+                                        relief="flat",
+                                        cursor="hand2",
+                                        padx=8, pady=2,
+                                        command=open_file)
+                    open_btn.pack(side="left", padx=2)
+                    
+        except Exception as e:
+            tk.Label(scrollable_frame,
+                    text=f"❌ Hata: {str(e)}",
+                    font=("Segoe UI", 9),
+                    fg="#e74c3c",
+                    bg="white").pack(pady=20, padx=10)
+    
+    # Certificates section (left)
+    create_document_section(main_grid_cert, "SERTİFİKALAR", MASTER_SERTIFIKA_PATH, "#27ae60", "🏆", 0)
+    
+    # Contracts section (right)
+    create_document_section(main_grid_cert, "SÖZLEŞMELER", MASTER_SOZLESME_PATH, "#e74c3c", "📝", 1)
 
 # ---------- GUI BAŞLATILMASI ----------
 def show_page(page_name):
