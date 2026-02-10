@@ -8180,6 +8180,28 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
     email_entry = tk.Entry(form_frame_cert, font=("Segoe UI", 10), width=30)
     email_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
     
+    tk.Label(form_frame_cert, text="Defacto Sözleşme Şablonu:", font=("Segoe UI", 10, "bold"),
+             bg="white").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+    
+    template_frame_cert = tk.Frame(form_frame_cert, bg="white")
+    template_frame_cert.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+    
+    template_entry_cert = tk.Entry(template_frame_cert, font=("Segoe UI", 9), width=30)
+    template_entry_cert.pack(side="left", fill="x", expand=True, padx=(0, 5))
+    
+    def browse_template_cert():
+        """Şablon sözleşme dosyası seç"""
+        file_path = filedialog.askopenfilename(
+            title="Defacto Sözleşme Şablonu Seçin",
+            filetypes=[("PDF Dosyaları", "*.pdf"), ("Word Dosyaları", "*.docx"), ("Metin Dosyaları", "*.txt"), ("Tüm Dosyalar", "*.*")]
+        )
+        if file_path:
+            template_entry_cert.delete(0, tk.END)
+            template_entry_cert.insert(0, file_path)
+    
+    tk.Button(template_frame_cert, text="Gözat", font=("Segoe UI", 8),
+             bg="#95a5a6", fg="white", cursor="hand2", command=browse_template_cert).pack(side="left")
+    
     form_frame_cert.grid_columnconfigure(1, weight=1)
     
     # Result area
@@ -8256,6 +8278,32 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
         
         globals()['last_compliance_check'] = compliance
     
+    def generate_contract():
+        """AI ile sözleşme oluştur"""
+        supplier = supplier_entry.get().strip()
+        if not supplier:
+            messagebox.showwarning("Uyarı", "Lütfen önce tedarikçi adı girin!")
+            return
+        
+        if 'last_compliance_check' not in globals():
+            messagebox.showwarning("Uyarı", "Lütfen önce uyumluluk kontrolü yapın!")
+            return
+        
+        result_text_cert.delete("1.0", "end")
+        template_path = template_entry_cert.get().strip() if template_entry_cert.get().strip() else None
+        
+        if template_path:
+            result_text_cert.insert("end", "🤖 AI ile sözleşme oluşturuluyor (Defacto şablonu kullanılıyor)...\n\n")
+        else:
+            result_text_cert.insert("end", "🤖 AI ile sözleşme oluşturuluyor...\n\n")
+        result_text_cert.update()
+        
+        # AI ile sözleşme oluştur
+        contract = generate_waste_contract_with_ai(supplier, globals()['last_compliance_check'], template_path)
+        
+        result_text_cert.delete("1.0", "end")
+        result_text_cert.insert("end", contract)
+    
     def send_email():
         """Tedarikçiye email gönder"""
         supplier = supplier_entry.get().strip()
@@ -8286,6 +8334,10 @@ Bu evrakların en kısa sürede tamamlanması gerekmektedir.
     tk.Button(btn_container_cert, text="🔍 Uyumluluk Kontrolü Yap", font=("Segoe UI", 10, "bold"),
              bg="#3498db", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=15, pady=8, command=check_fire_compliance).pack(side="left", padx=5)
+    
+    tk.Button(btn_container_cert, text="🤖 AI ile Sözleşme Oluştur", font=("Segoe UI", 10, "bold"),
+             bg="#9b59b6", fg="white", relief="raised", bd=2, cursor="hand2",
+             padx=15, pady=8, command=generate_contract).pack(side="left", padx=5)
     
     tk.Button(btn_container_cert, text="📧 Tedarikçiye Email Gönder", font=("Segoe UI", 10, "bold"),
              bg="#e67e22", fg="white", relief="raised", bd=2, cursor="hand2",
