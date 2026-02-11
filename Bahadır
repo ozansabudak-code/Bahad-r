@@ -4637,9 +4637,22 @@ def show_scorecard():
     ai_lbl.pack(fill="x", expand=True)
     
     def fetch_comment():
-        comment = get_scorecard_ai_comment(row, grade, description)
-        # Use after() to update GUI from main thread (Tkinter is not thread-safe)
-        ai_lbl.after(0, lambda: ai_lbl.configure(text=comment))
+        try:
+            comment = get_scorecard_ai_comment(row, grade, description)
+            # Use after() to update GUI from main thread (Tkinter is not thread-safe)
+            # Check if widget still exists before updating
+            try:
+                if ai_lbl.winfo_exists():
+                    ai_lbl.after(0, lambda: ai_lbl.configure(text=comment))
+            except:
+                pass  # Widget was destroyed, ignore
+        except Exception as e:
+            # Handle any errors during AI comment generation
+            try:
+                if ai_lbl.winfo_exists():
+                    ai_lbl.after(0, lambda: ai_lbl.configure(text=f"AI yorumu alınamadı: {str(e)}"))
+            except:
+                pass
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 def export_scorecard_pdf():
