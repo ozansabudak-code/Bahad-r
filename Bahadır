@@ -6286,6 +6286,331 @@ def transliterate_turkish(text):
         text = text.replace(turkish, ascii_char)
     return text
 
+def predict_supplier_risks_ai(supplier_data, historical_trends=None):
+    """
+    AI-powered predictive risk analysis for suppliers.
+    Analyzes patterns and predicts potential future issues.
+    
+    Args:
+        supplier_data: DataFrame or dict with supplier metrics
+        historical_trends: Optional historical data for trend analysis
+    
+    Returns:
+        dict with risk predictions, scores, and recommendations
+    """
+    if not GEMINI_API_KEY:
+        return {"error": "API anahtarı bulunamadı", "risk_level": "unknown"}
+    
+    try:
+        # Prepare data summary for AI
+        if isinstance(supplier_data, pd.DataFrame):
+            data_summary = supplier_data.head(50).to_dict(orient='records')
+        else:
+            data_summary = supplier_data
+        
+        # Build comprehensive prompt for predictive analysis
+        prompt = f"""Sen bir tedarik zinciri risk analisti ve tahmincisin. Aşağıdaki tedarikçi verilerini analiz et ve gelecekteki potansiyel riskleri tahmin et:
+
+MEVCUT VERİLER:
+{json.dumps(data_summary, ensure_ascii=False, indent=2)[:3000]}
+
+GÖREVİN:
+1. Her tedarikçi için risk seviyesini tahmin et (YÜKSEK/ORTA/DÜŞÜK)
+2. Potansiyel sorunları öngör (kalite, teslimat, fiyat artışı, vb.)
+3. Risk göstergeleri ve erken uyarı sinyalleri belirt
+4. Önleyici aksiyonlar öner
+5. En riskli 3 tedarikçiyi ve nedenlerini açıkla
+6. Gelecek 3 ay için tahminler yap
+
+ÇIKTI FORMATI (JSON):
+{{
+  "overall_risk_score": 0-100,
+  "high_risk_suppliers": ["supplier1", "supplier2"],
+  "risk_predictions": {{
+    "supplier_name": {{
+      "risk_level": "HIGH/MEDIUM/LOW",
+      "probability": 0-100,
+      "predicted_issues": ["issue1", "issue2"],
+      "early_warning_signs": ["sign1", "sign2"],
+      "recommended_actions": ["action1", "action2"],
+      "timeline": "next 1-3 months"
+    }}
+  }},
+  "market_trends": "trend analysis",
+  "summary": "executive summary in Turkish"
+}}
+
+Lütfen detaylı ve eylem odaklı tahminler yap."""
+
+        # Call Gemini API
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 2048
+            }
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        
+        if response.status_code == 200:
+            result = response.json()
+            ai_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            
+            # Try to parse JSON response
+            try:
+                # Extract JSON from markdown code blocks if present
+                if "```json" in ai_text:
+                    json_start = ai_text.find("```json") + 7
+                    json_end = ai_text.find("```", json_start)
+                    ai_text = ai_text[json_start:json_end].strip()
+                elif "```" in ai_text:
+                    json_start = ai_text.find("```") + 3
+                    json_end = ai_text.find("```", json_start)
+                    ai_text = ai_text[json_start:json_end].strip()
+                
+                predictions = json.loads(ai_text)
+                predictions["raw_response"] = ai_text
+                predictions["status"] = "success"
+                return predictions
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return as text
+                return {
+                    "status": "success",
+                    "raw_response": ai_text,
+                    "summary": ai_text,
+                    "overall_risk_score": 50  # Default moderate risk
+                }
+        else:
+            return {
+                "error": f"API hatası: {response.status_code}",
+                "status": "error"
+            }
+    
+    except Exception as e:
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+def show_predictive_analytics_window():
+    """Display predictive risk analysis in a new window"""
+    global sonuc_global, df_global
+    
+    if sonuc_global is None or df_global is None:
+        messagebox.showwarning("Uyarı", "Önce veri analizi yapmalısınız!")
+        return
+    
+    # Create new window
+    pred_window = tk.Toplevel(root)
+    pred_window.title("🔮 AI Tahmine Dayalı Risk Analizi")
+    pred_window.geometry("1000x700")
+    pred_window.configure(bg="#f0f2f5")
+    
+    # Header
+    header_frame = tk.Frame(pred_window, bg="#2c3e50", height=80)
+    header_frame.pack(fill="x")
+    header_frame.pack_propagate(False)
+    
+    tk.Label(
+        header_frame,
+        text="🔮 Yapay Zeka Destekli Tahmine Dayalı Risk Analizi",
+        font=("Segoe UI", 16, "bold"),
+        bg="#2c3e50",
+        fg="white"
+    ).pack(pady=25)
+    
+    # Main content frame with scrollbar
+    main_frame = tk.Frame(pred_window, bg="#f0f2f5")
+    main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    
+    canvas = tk.Canvas(main_frame, bg="#f0f2f5")
+    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+    scrollable_frame = tk.Frame(canvas, bg="#f0f2f5")
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
+    # Status label
+    status_label = tk.Label(
+        scrollable_frame,
+        text="🤖 AI analizi başlatılıyor...",
+        font=("Segoe UI", 12),
+        bg="#f0f2f5",
+        fg="#555"
+    )
+    status_label.pack(pady=20)
+    
+    # Progress bar
+    progress = ttk.Progressbar(scrollable_frame, mode='indeterminate', length=400)
+    progress.pack(pady=10)
+    progress.start()
+    
+    # Result text widget
+    result_frame = tk.Frame(scrollable_frame, bg="white", relief="solid", borderwidth=1)
+    result_frame.pack(fill="both", expand=True, pady=20, padx=10)
+    
+    result_text = tk.Text(
+        result_frame,
+        wrap="word",
+        font=("Segoe UI", 10),
+        bg="white",
+        fg="#333",
+        padx=15,
+        pady=15
+    )
+    result_text.pack(fill="both", expand=True)
+    
+    # Configure text tags for formatting
+    result_text.tag_config("title", font=("Segoe UI", 14, "bold"), foreground="#2c3e50")
+    result_text.tag_config("subtitle", font=("Segoe UI", 12, "bold"), foreground="#34495e")
+    result_text.tag_config("high_risk", font=("Segoe UI", 10, "bold"), foreground="#e74c3c")
+    result_text.tag_config("medium_risk", font=("Segoe UI", 10), foreground="#f39c12")
+    result_text.tag_config("low_risk", font=("Segoe UI", 10), foreground="#27ae60")
+    result_text.tag_config("action", font=("Segoe UI", 10), foreground="#3498db")
+    
+    def run_prediction():
+        """Run prediction in background thread"""
+        try:
+            # Get predictions from AI
+            predictions = predict_supplier_risks_ai(sonuc_global, df_global)
+            
+            # Update UI on main thread
+            def update_ui():
+                progress.stop()
+                progress.pack_forget()
+                status_label.configure(text="✅ Analiz tamamlandı!")
+                
+                result_text.delete("1.0", tk.END)
+                
+                if predictions.get("status") == "error":
+                    result_text.insert(tk.END, "❌ Hata Oluştu\n\n", "title")
+                    result_text.insert(tk.END, f"Hata: {predictions.get('error', 'Bilinmeyen hata')}\n")
+                    return
+                
+                # Display results
+                result_text.insert(tk.END, "🔮 TAHMİNE DAYALI RİSK ANALİZİ\n\n", "title")
+                result_text.insert(tk.END, f"Analiz Tarihi: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n")
+                
+                # Overall risk score
+                if "overall_risk_score" in predictions:
+                    score = predictions["overall_risk_score"]
+                    result_text.insert(tk.END, f"📊 Genel Risk Skoru: {score}/100\n\n", "subtitle")
+                    
+                    if score >= 70:
+                        result_text.insert(tk.END, "⚠️ YÜKSEK RİSK SEVİYESİ\n\n", "high_risk")
+                    elif score >= 40:
+                        result_text.insert(tk.END, "⚡ ORTA RİSK SEVİYESİ\n\n", "medium_risk")
+                    else:
+                        result_text.insert(tk.END, "✅ DÜŞÜK RİSK SEVİYESİ\n\n", "low_risk")
+                
+                # High risk suppliers
+                if "high_risk_suppliers" in predictions and predictions["high_risk_suppliers"]:
+                    result_text.insert(tk.END, "🚨 Yüksek Riskli Tedarikçiler:\n", "subtitle")
+                    for supplier in predictions["high_risk_suppliers"]:
+                        result_text.insert(tk.END, f"  • {supplier}\n", "high_risk")
+                    result_text.insert(tk.END, "\n")
+                
+                # Risk predictions by supplier
+                if "risk_predictions" in predictions:
+                    result_text.insert(tk.END, "📋 Tedarikçi Bazında Risk Tahminleri:\n\n", "subtitle")
+                    for supplier, pred in predictions["risk_predictions"].items():
+                        result_text.insert(tk.END, f"▶ {supplier}\n", "subtitle")
+                        
+                        risk_level = pred.get("risk_level", "UNKNOWN")
+                        tag = "high_risk" if risk_level == "HIGH" else "medium_risk" if risk_level == "MEDIUM" else "low_risk"
+                        result_text.insert(tk.END, f"   Risk Seviyesi: {risk_level}\n", tag)
+                        
+                        if "probability" in pred:
+                            result_text.insert(tk.END, f"   Olasılık: %{pred['probability']}\n")
+                        
+                        if "predicted_issues" in pred:
+                            result_text.insert(tk.END, "   Tahmini Sorunlar:\n")
+                            for issue in pred["predicted_issues"]:
+                                result_text.insert(tk.END, f"     • {issue}\n")
+                        
+                        if "recommended_actions" in pred:
+                            result_text.insert(tk.END, "   Önerilen Aksiyonlar:\n", "action")
+                            for action in pred["recommended_actions"]:
+                                result_text.insert(tk.END, f"     ✓ {action}\n", "action")
+                        
+                        result_text.insert(tk.END, "\n")
+                
+                # Summary
+                if "summary" in predictions:
+                    result_text.insert(tk.END, "📝 Yönetici Özeti:\n", "subtitle")
+                    result_text.insert(tk.END, f"{predictions['summary']}\n\n")
+                
+                # Raw response if structured data not available
+                if "raw_response" in predictions and not "risk_predictions" in predictions:
+                    result_text.insert(tk.END, predictions["raw_response"])
+                
+                result_text.configure(state="disabled")
+            
+            pred_window.after(0, update_ui)
+            
+        except Exception as e:
+            def show_error():
+                progress.stop()
+                status_label.configure(text=f"❌ Hata: {str(e)}")
+            pred_window.after(0, show_error)
+    
+    # Start prediction in background thread
+    threading.Thread(target=run_prediction, daemon=True).start()
+    
+    # Button frame
+    button_frame = tk.Frame(pred_window, bg="#f0f2f5")
+    button_frame.pack(fill="x", padx=20, pady=10)
+    
+    ttk.Button(
+        button_frame,
+        text="🔄 Yenile",
+        command=lambda: (result_text.delete("1.0", tk.END), 
+                        status_label.configure(text="🤖 Yeniden analiz ediliyor..."),
+                        progress.pack(pady=10),
+                        progress.start(),
+                        threading.Thread(target=run_prediction, daemon=True).start())
+    ).pack(side="left", padx=5)
+    
+    ttk.Button(
+        button_frame,
+        text="💾 Raporu Kaydet",
+        command=lambda: save_prediction_report(result_text.get("1.0", tk.END))
+    ).pack(side="left", padx=5)
+    
+    ttk.Button(
+        button_frame,
+        text="❌ Kapat",
+        command=pred_window.destroy
+    ).pack(side="right", padx=5)
+
+def save_prediction_report(content):
+    """Save prediction report to file"""
+    try:
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=f"Risk_Tahmini_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        )
+        if filename:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(content)
+            messagebox.showinfo("Başarılı", f"Rapor kaydedildi:\n{filename}")
+    except Exception as e:
+        messagebox.showerror("Hata", f"Rapor kaydedilemedi: {str(e)}")
+
 def ask_user_to_pick_column(cols):
     win = tk.Toplevel(); win.title("Kolon Seç"); tk.Label(win, text="Seçim yapın:").pack()
     combo = ttk.Combobox(win, values=cols, state="readonly"); combo.pack()
@@ -6381,8 +6706,10 @@ def _update_ai_comment_tab(message, en_iyi_df):
     
     style = ttk.Style()
     style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"))
+    style.configure("Predictive.TButton", font=("Segoe UI", 9, "bold"), foreground="#9b59b6")
     
     ttk.Button(bf, text="🏆 En İyi Tedarikçiyi Göster", style="Accent.TButton", command=lambda: show_best_supplier(en_iyi_df)).pack(side="left", padx=5)
+    ttk.Button(bf, text="🔮 Tahmine Dayalı Risk Analizi", style="Predictive.TButton", command=show_predictive_analytics_window).pack(side="left", padx=5)
     ttk.Button(bf, text="💾 Yorumu Kaydet (TXT)", command=lambda: export_ai_comment("txt")).pack(side="left", padx=5)
     ttk.Button(bf, text="📄 Yorumu Kaydet (PDF)", command=lambda: export_ai_comment("pdf")).pack(side="left", padx=5)
 
