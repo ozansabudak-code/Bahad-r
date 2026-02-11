@@ -6502,7 +6502,7 @@ def show_predictive_analytics_window():
                 
                 # Display results
                 result_text.insert(tk.END, "🔮 TAHMİNE DAYALI RİSK ANALİZİ\n\n", "title")
-                result_text.insert(tk.END, f"Analiz Tarihi: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n")
+                result_text.insert(tk.END, f"Analiz Tarihi: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n")
                 
                 # Overall risk score
                 if "overall_risk_score" in predictions:
@@ -6602,7 +6602,7 @@ def save_prediction_report(content):
         filename = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            initialfile=f"Risk_Tahmini_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            initialfile=f"Risk_Tahmini_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         )
         if filename:
             with open(filename, 'w', encoding='utf-8') as f:
