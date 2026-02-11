@@ -8005,6 +8005,404 @@ def send_compliance_email(supplier_email, supplier_name, compliance_data, ai_mes
 
 # ========== END OF AI HELPER FUNCTIONS ==========
 
+# ========== DOĞAL DİL SORGU MOTORU (NATURAL LANGUAGE QUERY ENGINE) ==========
+
+def init_natural_language_query_tab():
+    """Doğal Dil Sorgu Motoru - Kullanıcılar Türkçe soru sorarak veri sorgulayabilir"""
+    global nlq_history_text, nlq_query_entry
+    
+    for widget in frame_nlq.winfo_children():
+        widget.destroy()
+    
+    # Başlık
+    title_frame = tk.Frame(frame_nlq, bg="#3498db", height=60)
+    title_frame.pack(fill="x", side="top")
+    title_frame.pack_propagate(False)
+    
+    tk.Label(title_frame, text="🗣️ Doğal Dil Sorgu Motoru", 
+             font=("Segoe UI", 18, "bold"), 
+             fg="white", bg="#3498db").pack(pady=15)
+    
+    # Alt başlık
+    subtitle_frame = tk.Frame(frame_nlq, bg="#ecf0f1")
+    subtitle_frame.pack(fill="x")
+    tk.Label(subtitle_frame, 
+             text="Verileriniz hakkında Türkçe sorular sorun, yapay zeka anında cevaplasın!",
+             font=("Segoe UI", 11), fg="#34495e", bg="#ecf0f1").pack(pady=10)
+    
+    # Ana içerik
+    main_container = tk.Frame(frame_nlq, bg="white")
+    main_container.pack(fill="both", expand=True, padx=15, pady=10)
+    
+    # Sol panel - Sorgu geçmişi ve sonuçlar
+    left_panel = tk.Frame(main_container, bg="white")
+    left_panel.pack(side="left", fill="both", expand=True, padx=(0, 5))
+    
+    history_label = tk.Label(left_panel, text="📊 Sorgu Sonuçları", 
+                            font=("Segoe UI", 13, "bold"), 
+                            fg="#2c3e50", bg="white", anchor="w")
+    history_label.pack(fill="x", pady=(5, 10))
+    
+    # Sonuç gösterim alanı
+    history_frame = tk.Frame(left_panel, bg="white")
+    history_frame.pack(fill="both", expand=True)
+    
+    scrollbar = tk.Scrollbar(history_frame)
+    scrollbar.pack(side="right", fill="y")
+    
+    nlq_history_text = tk.Text(history_frame, 
+                               wrap="word", 
+                               font=("Segoe UI", 10), 
+                               bg="#f8f9fa", 
+                               fg="#2c3e50",
+                               bd=1, 
+                               relief="solid",
+                               yscrollcommand=scrollbar.set,
+                               padx=15,
+                               pady=15)
+    nlq_history_text.pack(side="left", fill="both", expand=True)
+    scrollbar.configure(command=nlq_history_text.yview)
+    
+    # Text tag konfigürasyonu
+    nlq_history_text.tag_configure("question", foreground="#3498db", font=("Segoe UI", 11, "bold"))
+    nlq_history_text.tag_configure("answer", foreground="#2c3e50", font=("Segoe UI", 10))
+    nlq_history_text.tag_configure("error", foreground="#e74c3c", font=("Segoe UI", 10, "italic"))
+    nlq_history_text.tag_configure("data", foreground="#16a085", font=("Courier New", 9))
+    nlq_history_text.tag_configure("timestamp", foreground="#95a5a6", font=("Segoe UI", 8))
+    
+    # Hoş geldin mesajı
+    nlq_history_text.insert("1.0", "🎉 Doğal Dil Sorgu Motoruna Hoş Geldiniz!\n\n", "question")
+    nlq_history_text.insert("end", "Verileriniz hakkında Türkçe sorular sorabilirsiniz. AI, sorunuzu anlayıp gerekli analizleri yaparak cevaplar.\n\n")
+    nlq_history_text.insert("end", "💡 Örnek Sorular:\n", "question")
+    nlq_history_text.insert("end", "• En iyi 5 tedarikçiyi göster\n")
+    nlq_history_text.insert("end", "• Geçen ay en çok gecikme yapan tedarikçiler?\n")
+    nlq_history_text.insert("end", "• Kalite skoru 80'in üzerinde olan tedarikçiler\n")
+    nlq_history_text.insert("end", "• Bu yıl fiyatı %10'dan fazla artan ürünler\n")
+    nlq_history_text.insert("end", "• Teslim performansı düşük tedarikçileri listele\n\n")
+    nlq_history_text.insert("end", "Bir soru yazın ve Enter'a basın! 🚀\n")
+    nlq_history_text.configure(state="disabled")
+    
+    # Sağ panel - Örnek sorular ve yardım
+    right_panel = tk.Frame(main_container, bg="white", width=300)
+    right_panel.pack(side="right", fill="y", padx=(5, 0))
+    right_panel.pack_propagate(False)
+    
+    # Örnek sorular bölümü
+    examples_label = tk.Label(right_panel, text="💡 Örnek Sorular", 
+                             font=("Segoe UI", 12, "bold"), 
+                             fg="#2c3e50", bg="white")
+    examples_label.pack(pady=(5, 10))
+    
+    example_questions = [
+        "En iyi 5 tedarikçi",
+        "Kalite skoru en yüksek 10 tedarikçi",
+        "Teslimat performansı %90'ın üzerinde olanlar",
+        "Geçen ay reklamasyonu olan tedarikçiler",
+        "Ortalama fiyatı 100'den fazla olan ürünler",
+        "Stok grubu T-shirt olan ürünler",
+        "İade oranı %5'ten fazla olanlar",
+        "Bu yıl puanı düşen tedarikçiler",
+    ]
+    
+    for question in example_questions:
+        btn = tk.Button(right_panel, 
+                       text=f"📌 {question}", 
+                       font=("Segoe UI", 9),
+                       bg="#ecf0f1",
+                       fg="#2c3e50",
+                       relief="flat",
+                       bd=0,
+                       padx=10,
+                       pady=8,
+                       anchor="w",
+                       cursor="hand2",
+                       command=lambda q=question: execute_example_query(q))
+        btn.pack(fill="x", pady=2)
+        
+        # Hover efekti
+        def on_enter(e, b=btn):
+            b.configure(bg="#3498db", fg="white")
+        def on_leave(e, b=btn):
+            b.configure(bg="#ecf0f1", fg="#2c3e50")
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+    
+    # Yardım bölümü
+    help_frame = tk.LabelFrame(right_panel, text="ℹ️ Yardım", 
+                              font=("Segoe UI", 10, "bold"),
+                              bg="white", fg="#34495e",
+                              padx=10, pady=10)
+    help_frame.pack(fill="x", pady=(15, 5))
+    
+    help_text = """AI, sorunuzu analiz eder ve:
+• Hangi veriyi kullanacağını
+• Nasıl filtreleyeceğini
+• Hangi sıralamayı yapacağını
+otomatik olarak belirler.
+
+Doğal Türkçe yazın!"""
+    
+    tk.Label(help_frame, text=help_text, 
+            font=("Segoe UI", 9), 
+            bg="white", fg="#7f8c8d",
+            justify="left").pack(anchor="w")
+    
+    # Temizle butonu
+    clear_btn = tk.Button(right_panel,
+                         text="🗑️ Geçmişi Temizle",
+                         font=("Segoe UI", 9, "bold"),
+                         bg="#e74c3c",
+                         fg="white",
+                         relief="flat",
+                         padx=15,
+                         pady=8,
+                         cursor="hand2",
+                         command=clear_nlq_history)
+    clear_btn.pack(side="bottom", fill="x", pady=5)
+    
+    # Alt panel - Sorgu girişi
+    input_container = tk.Frame(frame_nlq, bg="#34495e", height=80)
+    input_container.pack(fill="x", side="bottom")
+    input_container.pack_propagate(False)
+    
+    input_frame = tk.Frame(input_container, bg="#34495e")
+    input_frame.pack(fill="both", expand=True, padx=20, pady=15)
+    
+    # Sorgu giriş alanı
+    nlq_query_entry = tk.Entry(input_frame, 
+                              font=("Segoe UI", 12),
+                              bg="white",
+                              fg="#2c3e50",
+                              bd=0,
+                              relief="flat")
+    nlq_query_entry.pack(side="left", fill="both", expand=True, ipady=10)
+    nlq_query_entry.insert(0, "Sorunuzu buraya yazın...")
+    nlq_query_entry.bind("<FocusIn>", lambda e: nlq_query_entry.delete(0, "end") if nlq_query_entry.get() == "Sorunuzu buraya yazın..." else None)
+    nlq_query_entry.bind("<Return>", lambda e: process_nlq_query())
+    
+    # Gönder butonu
+    send_btn = tk.Button(input_frame,
+                        text="🔍 Sorgula",
+                        font=("Segoe UI", 11, "bold"),
+                        bg="#3498db",
+                        fg="white",
+                        relief="flat",
+                        bd=0,
+                        padx=25,
+                        pady=10,
+                        cursor="hand2",
+                        command=process_nlq_query)
+    send_btn.pack(side="right", padx=(10, 0))
+    
+    # Log activity
+    if activity_logger:
+        activity_logger.log_activity("Doğal Dil Sorgu Motoru açıldı", "NLQ")
+
+def execute_example_query(question):
+    """Örnek sorguyu çalıştır"""
+    nlq_query_entry.delete(0, "end")
+    nlq_query_entry.insert(0, question)
+    process_nlq_query()
+
+def clear_nlq_history():
+    """Sorgu geçmişini temizle"""
+    nlq_history_text.configure(state="normal")
+    nlq_history_text.delete("1.0", "end")
+    nlq_history_text.insert("1.0", "🗑️ Geçmiş temizlendi. Yeni bir soru sorun!\n\n")
+    nlq_history_text.configure(state="disabled")
+
+def process_nlq_query():
+    """Doğal dil sorgusunu işle ve AI ile analiz et"""
+    global nlq_history_text, nlq_query_entry
+    
+    query = nlq_query_entry.get().strip()
+    if not query or query == "Sorunuzu buraya yazın...":
+        messagebox.showwarning("Uyarı", "Lütfen bir soru yazın!")
+        return
+    
+    # Sorguyu geçmişe ekle
+    nlq_history_text.configure(state="normal")
+    nlq_history_text.insert("end", f"\n{'='*80}\n")
+    nlq_history_text.insert("end", f"❓ Soru: {query}\n", "question")
+    nlq_history_text.insert("end", f"⏰ {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n", "timestamp")
+    nlq_history_text.insert("end", f"{'='*80}\n\n")
+    nlq_history_text.insert("end", "🤖 AI analiz ediyor...\n\n")
+    nlq_history_text.configure(state="disabled")
+    nlq_history_text.see("end")
+    
+    # Entry'yi temizle
+    nlq_query_entry.delete(0, "end")
+    
+    # Log activity
+    if activity_logger:
+        activity_logger.log_activity(f"NLQ Sorgusu: {query}", "NLQ")
+    
+    # Thread'de AI işlemi başlat
+    def fetch_nlq_response():
+        try:
+            response = execute_natural_language_query(query)
+            
+            # GUI'yi güvenli şekilde güncelle
+            try:
+                if nlq_history_text.winfo_exists():
+                    nlq_history_text.after(0, lambda: update_nlq_result(response))
+            except:
+                pass
+        except Exception as e:
+            error_msg = f"❌ Hata: {str(e)}"
+            try:
+                if nlq_history_text.winfo_exists():
+                    nlq_history_text.after(0, lambda: update_nlq_result(error_msg))
+            except:
+                pass
+    
+    threading.Thread(target=fetch_nlq_response, daemon=True).start()
+
+def update_nlq_result(response):
+    """NLQ sonucunu güncelle"""
+    nlq_history_text.configure(state="normal")
+    
+    # "AI analiz ediyor..." mesajını kaldır
+    content = nlq_history_text.get("1.0", "end")
+    if "AI analiz ediyor..." in content:
+        # Son satırı bul ve sil
+        lines = content.split("\n")
+        for i in range(len(lines) - 1, -1, -1):
+            if "AI analiz ediyor..." in lines[i]:
+                # O satırı sil
+                nlq_history_text.delete(f"end-{len(lines)-i}l", f"end-{len(lines)-i-1}l")
+                break
+    
+    nlq_history_text.insert("end", f"💡 Yanıt:\n", "question")
+    nlq_history_text.insert("end", f"{response}\n\n", "answer")
+    nlq_history_text.configure(state="disabled")
+    nlq_history_text.see("end")
+
+def execute_natural_language_query(query):
+    """Türkçe sorguyu AI ile işle ve veri üzerinde çalıştır"""
+    
+    if not GEMINI_API_KEY:
+        return "❌ Gemini API anahtarı tanımlı değil. Lütfen GEMINI_API_KEY değişkenini güncelleyin."
+    
+    # Mevcut veri durumunu kontrol et
+    data_available = []
+    if 'tedarik_df' in globals() and tedarik_df is not None and not tedarik_df.empty:
+        data_available.append(f"Tedarik verisi ({len(tedarik_df)} satır)")
+    if 'reklamasyon_df' in globals() and reklamasyon_df is not None and not reklamasyon_df.empty:
+        data_available.append(f"Reklamasyon verisi ({len(reklamasyon_df)} satır)")
+    if 'detay_sonuc_global' in globals() and detay_sonuc_global is not None and not detay_sonuc_global.empty:
+        data_available.append(f"Analiz sonuçları ({len(detay_sonuc_global)} satır)")
+    if 'df_global' in globals() and df_global is not None and not df_global.empty:
+        data_available.append(f"Ana veri ({len(df_global)} satır)")
+    
+    if not data_available:
+        return "⚠️ Henüz veri yüklenmemiş. Lütfen önce veri yükleyin ve analiz edin."
+    
+    # Veri hakkında bilgi topla
+    data_info = "\n".join(data_available)
+    
+    # En uygun veri setini seç ve kolonları al
+    if 'detay_sonuc_global' in globals() and detay_sonuc_global is not None and not detay_sonuc_global.empty:
+        df_to_use = detay_sonuc_global
+        data_type = "Analiz Sonuçları"
+    elif 'df_global' in globals() and df_global is not None and not df_global.empty:
+        df_to_use = df_global
+        data_type = "Ana Veri"
+    elif 'tedarik_df' in globals() and tedarik_df is not None and not tedarik_df.empty:
+        df_to_use = tedarik_df
+        data_type = "Tedarik Verisi"
+    else:
+        return "⚠️ Kullanılabilir veri bulunamadı."
+    
+    # Veri özetini hazırla
+    columns_info = ", ".join(df_to_use.columns.tolist()[:20])  # İlk 20 kolon
+    if len(df_to_use.columns) > 20:
+        columns_info += f" ... (ve {len(df_to_use.columns) - 20} kolon daha)"
+    
+    # İstatistikleri hazırla
+    sample_data = df_to_use.head(3).to_string()
+    
+    # AI'ya gönderilecek prompt
+    prompt = f"""Sen bir veri analiz asistanısın. Kullanıcı Türkçe bir soru sordu. Bu soruyu analiz et ve veri üzerinde nasıl işlem yapılacağını açıkla.
+
+Kullanıcı Sorusu: "{query}"
+
+Mevcut Veri: {data_type}
+Satır Sayısı: {len(df_to_use)}
+Kolonlar: {columns_info}
+
+Örnek Veri (İlk 3 satır):
+{sample_data}
+
+Görevi:
+1. Kullanıcının sorusunu anla
+2. Hangi kolonları kullanacağını belirle
+3. Nasıl filtreleme/sıralama yapılacağını açıkla
+4. Kullanıcıya sonucu Türkçe ve anlaşılır şekilde sun
+
+ÖNEMLI: Sadece mevcut kolonları kullan. Olmayan kolonlar için varsayım yapma.
+
+Lütfen şu formatta yanıt ver:
+- Sorguyu nasıl anladığını kısaca açıkla
+- Sonuçları listele (varsa ilk 10-15 sonuç)
+- Özet istatistikler ver
+- Kullanıcıya öneriler sun
+
+Yanıtın Türkçe, profesyonel ve anlaşılır olsun."""
+
+    try:
+        # Gemini API'ye istek gönder
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'candidates' in result and len(result['candidates']) > 0:
+                ai_response = result['candidates'][0]['content']['parts'][0]['text']
+                
+                # Python kodu içeriyorsa çalıştır
+                if "```python" in ai_response:
+                    # Kodu çıkar ve çalıştır
+                    try:
+                        code_start = ai_response.find("```python") + 9
+                        code_end = ai_response.find("```", code_start)
+                        code = ai_response[code_start:code_end].strip()
+                        
+                        # Güvenli bir namespace'de çalıştır
+                        local_vars = {
+                            'df': df_to_use,
+                            'pd': pd,
+                            'np': np
+                        }
+                        exec(code, {}, local_vars)
+                        
+                        # Sonucu al
+                        if 'result' in local_vars:
+                            result_str = str(local_vars['result'])
+                            ai_response += f"\n\n📊 Sonuç:\n{result_str}"
+                    except Exception as e:
+                        ai_response += f"\n\n⚠️ Kod çalıştırma hatası: {str(e)}"
+                
+                return ai_response
+            else:
+                return "❌ AI'dan yanıt alınamadı."
+        else:
+            return f"❌ API Hatası: {response.status_code} - {response.text}"
+            
+    except requests.exceptions.Timeout:
+        return "❌ İstek zaman aşımına uğradı. Lütfen tekrar deneyin."
+    except Exception as e:
+        return f"❌ Hata oluştu: {str(e)}"
+
+# ========== END OF NATURAL LANGUAGE QUERY ENGINE ==========
+
 def init_compliance_center_tab():
     """Tedarikçi Uyumluluk Merkezi - Tabbed Interface with Supplier List, Manual Entry, and Certificate Tracking"""
     from datetime import datetime
@@ -9064,6 +9462,9 @@ frame_stok = ttk.Frame(content_area, padding="10")
 # Tedarikçi Uyumluluk Merkezi Frame
 frame_compliance = ttk.Frame(content_area, padding="10")
 
+# Doğal Dil Sorgu Motoru Frame
+frame_nlq = ttk.Frame(content_area, padding="10")
+
 frames = {
     "Yönetim Paneli": frame_ozet,
     "Analiz": frame_analiz,
@@ -9096,7 +9497,9 @@ frames = {
     # Stok Yönetimi
     "Stok Yönetimi": frame_stok,
     # Tedarikçi Uyumluluk Merkezi
-    "Tedarikçi Uyumluluk": frame_compliance
+    "Tedarikçi Uyumluluk": frame_compliance,
+    # Doğal Dil Sorgu Motoru
+    "Doğal Dil Sorguları": frame_nlq
 }
 
 menu_items = [
@@ -9104,6 +9507,7 @@ menu_items = [
     ("🔍 Analiz & Veri", "Analiz"),
     ("🛒 Akıllı Sipariş", "Akıllı Sipariş"),
     ("💰 Pazarlık Robotu", "Pazarlık Robotu"), 
+    ("🗣️ Doğal Dil Sorguları", "Doğal Dil Sorguları"), # YENİ! EN ÖNEMLİ MODÜL
     ("📰 Sektör Haberleri", "Sektör Haberleri"), # YENİ BUTON
     ("🔮 Trend Avcısı", "Trend Avcısı"), # TREND HUNTER
     ("🏭 Reklamasyon Yönetimi", "Reklamasyon Yönetimi"), # YENİ BUTON
@@ -9140,6 +9544,7 @@ status_label.pack(side="bottom", fill="x")
 draw_dashboard(frame_ozet)
 init_map_tab() 
 init_chat_tab() 
+init_natural_language_query_tab()  # Doğal Dil Sorgu Motoru - EN ÖNEMLİ MODÜL!
 init_scorecard_tab() 
 init_ocr_tab() 
 init_smart_order_tab() 
