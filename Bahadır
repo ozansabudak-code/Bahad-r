@@ -9962,7 +9962,7 @@ def load_action_recommendations():
         try:
             # Veri kontrolü - önce veri yüklenmiş mi kontrol et
             if detay_sonuc_global is None and df_global is None:
-                action_recommendations_container.after(0, lambda: display_error(
+                root.after(0, lambda: display_error(
                     "Veri yüklenmedi. Lütfen önce veri yükleyin."
                 ))
                 return
@@ -9975,9 +9975,9 @@ def load_action_recommendations():
             recommendations = generate_action_recommendations(problems)
             
             # UI'ı güncelle
-            action_recommendations_container.after(0, lambda: display_recommendations(recommendations))
+            root.after(0, lambda: display_recommendations(recommendations))
         except Exception as e:
-            action_recommendations_container.after(0, lambda: display_error(str(e)))
+            root.after(0, lambda: display_error(str(e)))
     
     # Thread'de çalıştır
     threading.Thread(target=process_recommendations, daemon=True).start()
