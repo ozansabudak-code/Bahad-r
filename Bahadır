@@ -9960,6 +9960,13 @@ def load_action_recommendations():
     
     def process_recommendations():
         try:
+            # Veri kontrolü - önce veri yüklenmiş mi kontrol et
+            if detay_sonuc_global is None and df_global is None:
+                action_recommendations_container.after(0, lambda: display_error(
+                    "Veri yüklenmedi. Lütfen önce veri yükleyin."
+                ))
+                return
+            
             # Problemleri tespit et
             data_to_analyze = detay_sonuc_global if detay_sonuc_global is not None else df_global
             problems = detect_supplier_problems(data_to_analyze)
