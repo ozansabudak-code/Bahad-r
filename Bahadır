@@ -9087,8 +9087,8 @@ def init_email_inbox_tab():
         if not selection:
             return
         
-        item = email_list_tree.item(selection[0])
-        email_id = item['values'][0] if item['values'] else None
+        # Get email_id from item identifier (iid)
+        email_id = int(selection[0])
         
         if not email_id:
             return
@@ -9129,12 +9129,13 @@ def init_email_inbox_tab():
             # Icon based on status
             icon = "📩" if read == 0 else ("💬" if replied == 1 else "✉️")
             
-            # Add to tree (store ID in first column)
+            # Add to tree - use email_id as iid, only display data in values
             email_list_tree.insert(
                 "",
                 "end",
+                iid=str(email_id),  # Store email_id as item identifier
                 text=icon,
-                values=(email_id, from_addr, subject, date[:16] if date else "")
+                values=(from_addr, subject, date[:16] if date else "")  # Only display data
             )
     
     # Initial load
