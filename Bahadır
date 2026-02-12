@@ -8005,6 +8005,515 @@ def send_compliance_email(supplier_email, supplier_name, compliance_data, ai_mes
 
 # ========== END OF AI HELPER FUNCTIONS ==========
 
+# ========== AKILLİ EMAIL OTOMASYONU (INTELLIGENT EMAIL AUTOMATION) ==========
+
+def generate_ai_email(scenario, supplier_name, supplier_email, context_data=None):
+    """
+    AI-powered email generation for various supplier communication scenarios
+    
+    Args:
+        scenario: Email type (delay, quality, price, meeting, document, review, thanks, warning)
+        supplier_name: Name of the supplier
+        supplier_email: Email address of supplier
+        context_data: Dictionary with relevant context (dates, amounts, issues, etc.)
+    
+    Returns:
+        Dictionary with email details (subject, body, priority)
+    """
+    if not context_data:
+        context_data = {}
+    
+    # Prepare context for AI
+    context_str = f"""
+Tedarikçi: {supplier_name}
+Email: {supplier_email}
+Senaryo: {scenario}
+"""
+    
+    # Add scenario-specific context
+    if scenario == "delay" and context_data.get("days_late"):
+        context_str += f"Gecikme Süresi: {context_data['days_late']} gün\n"
+        if context_data.get("order_no"):
+            context_str += f"Sipariş No: {context_data['order_no']}\n"
+        if context_data.get("planned_date"):
+            context_str += f"Planlanan Tarih: {context_data['planned_date']}\n"
+    
+    elif scenario == "quality" and context_data.get("return_rate"):
+        context_str += f"İade Oranı: %{context_data['return_rate']}\n"
+        if context_data.get("issue_description"):
+            context_str += f"Sorun: {context_data['issue_description']}\n"
+    
+    elif scenario == "price" and context_data.get("price_increase"):
+        context_str += f"Fiyat Artışı: %{context_data['price_increase']}\n"
+        if context_data.get("product"):
+            context_str += f"Ürün: {context_data['product']}\n"
+    
+    elif scenario == "meeting":
+        if context_data.get("meeting_purpose"):
+            context_str += f"Toplantı Amacı: {context_data['meeting_purpose']}\n"
+        if context_data.get("suggested_date"):
+            context_str += f"Önerilen Tarih: {context_data['suggested_date']}\n"
+    
+    elif scenario == "document":
+        if context_data.get("missing_docs"):
+            context_str += f"Eksik Evraklar: {context_data['missing_docs']}\n"
+        if context_data.get("deadline"):
+            context_str += f"Son Tarih: {context_data['deadline']}\n"
+    
+    elif scenario == "review":
+        if context_data.get("performance_score"):
+            context_str += f"Performans Skoru: {context_data['performance_score']}/100\n"
+        if context_data.get("period"):
+            context_str += f"Değerlendirme Dönemi: {context_data['period']}\n"
+    
+    # Create AI prompt
+    prompt = f"""Sen profesyonel bir tedarikçi ilişkileri uzmanısın. Aşağıdaki bilgilere göre Türkçe, profesyonel ve nezaket kurallarına uygun bir iş emaili oluştur.
+
+{context_str}
+
+Email Gereksinimleri:
+1. Konu başlığı kısa ve öz olmalı
+2. Gövde metni profesyonel Türkçe ile yazılmalı
+3. Nazik ama net bir ton kullan
+4. Gerekirse detayları listele
+5. Açık bir aksiyon/beklenti belirt
+6. Resmi iş emaili formatında ol
+7. İmza kısmı için sadece "Saygılarımızla," yaz
+
+Lütfen şu formatta yanıt ver:
+KONU: [email konusu]
+GÖVDE:
+[email gövdesi]
+
+NOT: Sadece email içeriğini yaz, başka açıklama ekleme."""
+
+    try:
+        # Call Gemini API
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(prompt, request_options={"timeout": 60})
+        
+        if response and response.text:
+            email_text = response.text.strip()
+            
+            # Parse response
+            subject = ""
+            body = ""
+            
+            if "KONU:" in email_text:
+                parts = email_text.split("GÖVDE:", 1)
+                subject_part = parts[0].replace("KONU:", "").strip()
+                subject = subject_part
+                if len(parts) > 1:
+                    body = parts[1].strip()
+            else:
+                # Fallback: use first line as subject
+                lines = email_text.split("\n")
+                subject = lines[0][:100]
+                body = "\n".join(lines[1:])
+            
+            # Determine priority
+            priority = "Normal"
+            if scenario in ["delay", "quality", "warning"]:
+                priority = "Yüksek"
+            elif scenario in ["price", "document"]:
+                priority = "Orta"
+            
+            return {
+                "success": True,
+                "subject": subject,
+                "body": body,
+                "to": supplier_email,
+                "supplier_name": supplier_name,
+                "scenario": scenario,
+                "priority": priority
+            }
+        else:
+            return {
+                "success": False,
+                "error": "AI yanıt oluşturamadı"
+            }
+    
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Email oluşturma hatası: {str(e)}"
+        }
+
+def init_email_automation_tab():
+    """Akıllı Email Otomasyonu - AI ile otomatik email oluşturma"""
+    global email_scenario_var, email_supplier_var, email_context_frame
+    global email_preview_text, email_subject_entry, email_to_entry
+    
+    for widget in frame_email_automation.winfo_children():
+        widget.destroy()
+    
+    # Main container with scrollbar
+    main_canvas = tk.Canvas(frame_email_automation, bg="#f0f0f0", highlightthickness=0)
+    scrollbar = ttk.Scrollbar(frame_email_automation, orient="vertical", command=main_canvas.yview)
+    scrollable_frame = ttk.Frame(main_canvas)
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+    )
+    
+    main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    main_canvas.configure(yscrollcommand=scrollbar.set)
+    
+    # Title Section
+    title_frame = tk.Frame(scrollable_frame, bg="#2c3e50", height=80)
+    title_frame.pack(fill="x", padx=0, pady=0)
+    title_frame.pack_propagate(False)
+    
+    title_label = tk.Label(
+        title_frame,
+        text="📧 Akıllı Email Otomasyonu",
+        font=("Segoe UI", 20, "bold"),
+        bg="#2c3e50",
+        fg="white"
+    )
+    title_label.pack(pady=15)
+    
+    subtitle_label = tk.Label(
+        title_frame,
+        text="AI ile profesyonel tedarikçi emaillerini otomatik oluştur",
+        font=("Segoe UI", 11),
+        bg="#2c3e50",
+        fg="#ecf0f1"
+    )
+    subtitle_label.pack()
+    
+    # Content container
+    content_frame = tk.Frame(scrollable_frame, bg="#f0f0f0")
+    content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    
+    # Left panel - Email Generation
+    left_panel = tk.LabelFrame(
+        content_frame,
+        text="Email Oluştur",
+        font=("Segoe UI", 12, "bold"),
+        bg="white",
+        relief="raised",
+        bd=2
+    )
+    left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+    
+    # Scenario selection
+    tk.Label(left_panel, text="Email Senaryosu:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
+    
+    email_scenario_var = tk.StringVar(value="delay")
+    scenarios = [
+        ("Teslimat Gecikmesi", "delay"),
+        ("Kalite Sorunu", "quality"),
+        ("Fiyat Görüşmesi", "price"),
+        ("Toplantı Daveti", "meeting"),
+        ("Eksik Evrak Hatırlatma", "document"),
+        ("Performans Değerlendirmesi", "review"),
+        ("Teşekkür / Takdir", "thanks"),
+        ("Uyarı / Escalation", "warning")
+    ]
+    
+    scenario_frame = tk.Frame(left_panel, bg="white")
+    scenario_frame.pack(fill="x", padx=15, pady=5)
+    
+    for i, (label, value) in enumerate(scenarios):
+        row = i // 2
+        col = i % 2
+        rb = tk.Radiobutton(
+            scenario_frame,
+            text=label,
+            variable=email_scenario_var,
+            value=value,
+            font=("Segoe UI", 9),
+            bg="white",
+            activebackground="white"
+        )
+        rb.grid(row=row, column=col, sticky="w", padx=5, pady=2)
+    
+    # Supplier selection
+    tk.Label(left_panel, text="Tedarikçi:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
+    
+    supplier_frame = tk.Frame(left_panel, bg="white")
+    supplier_frame.pack(fill="x", padx=15, pady=5)
+    
+    email_supplier_var = tk.StringVar()
+    supplier_combo = ttk.Combobox(supplier_frame, textvariable=email_supplier_var, state="readonly", font=("Segoe UI", 10))
+    supplier_combo.pack(fill="x")
+    
+    # Get supplier list from data
+    suppliers = []
+    if detay_sonuc_global is not None and not detay_sonuc_global.empty:
+        if tedarikci_col_global in detay_sonuc_global.columns:
+            suppliers = sorted(detay_sonuc_global[tedarikci_col_global].unique().tolist())
+    
+    supplier_combo['values'] = suppliers if suppliers else ["Tedarikçi bulunamadı"]
+    if suppliers:
+        supplier_combo.current(0)
+    
+    # Context fields (dynamic based on scenario)
+    tk.Label(left_panel, text="Detaylar:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
+    
+    email_context_frame = tk.Frame(left_panel, bg="white")
+    email_context_frame.pack(fill="both", expand=True, padx=15, pady=5)
+    
+    # Default context fields
+    tk.Label(email_context_frame, text="Ek Notlar (opsiyonel):", font=("Segoe UI", 9), bg="white").grid(row=0, column=0, sticky="w", pady=5)
+    context_notes = tk.Text(email_context_frame, height=3, font=("Segoe UI", 9), wrap="word")
+    context_notes.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+    email_context_frame.grid_columnconfigure(0, weight=1)
+    
+    # Generate button
+    generate_btn = tk.Button(
+        left_panel,
+        text="🤖 Email Oluştur",
+        font=("Segoe UI", 11, "bold"),
+        bg="#27ae60",
+        fg="white",
+        activebackground="#229954",
+        activeforeground="white",
+        cursor="hand2",
+        relief="raised",
+        bd=3,
+        command=lambda: generate_email_content()
+    )
+    generate_btn.pack(fill="x", padx=15, pady=15)
+    
+    # Right panel - Email Preview
+    right_panel = tk.LabelFrame(
+        content_frame,
+        text="Email Önizleme ve Gönderim",
+        font=("Segoe UI", 12, "bold"),
+        bg="white",
+        relief="raised",
+        bd=2
+    )
+    right_panel.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+    
+    # Email fields
+    tk.Label(right_panel, text="Kime:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 2))
+    email_to_entry = tk.Entry(right_panel, font=("Segoe UI", 10))
+    email_to_entry.pack(fill="x", padx=15, pady=(0, 10))
+    
+    tk.Label(right_panel, text="Konu:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=15, pady=(5, 2))
+    email_subject_entry = tk.Entry(right_panel, font=("Segoe UI", 10))
+    email_subject_entry.pack(fill="x", padx=15, pady=(0, 10))
+    
+    tk.Label(right_panel, text="Email İçeriği:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=15, pady=(5, 2))
+    
+    email_preview_text = tk.Text(
+        right_panel,
+        wrap="word",
+        font=("Segoe UI", 10),
+        height=20,
+        relief="sunken",
+        bd=2
+    )
+    email_preview_text.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+    
+    # Action buttons
+    button_frame = tk.Frame(right_panel, bg="white")
+    button_frame.pack(fill="x", padx=15, pady=10)
+    
+    send_btn = tk.Button(
+        button_frame,
+        text="📧 Email Gönder",
+        font=("Segoe UI", 10, "bold"),
+        bg="#3498db",
+        fg="white",
+        activebackground="#2980b9",
+        activeforeground="white",
+        cursor="hand2",
+        command=lambda: send_generated_email()
+    )
+    send_btn.pack(side="left", expand=True, fill="x", padx=(0, 5))
+    
+    save_draft_btn = tk.Button(
+        button_frame,
+        text="💾 Taslak Kaydet",
+        font=("Segoe UI", 10),
+        bg="#95a5a6",
+        fg="white",
+        activebackground="#7f8c8d",
+        activeforeground="white",
+        cursor="hand2",
+        command=lambda: save_email_draft()
+    )
+    save_draft_btn.pack(side="left", expand=True, fill="x", padx=5)
+    
+    clear_btn = tk.Button(
+        button_frame,
+        text="🔄 Temizle",
+        font=("Segoe UI", 10),
+        bg="#e74c3c",
+        fg="white",
+        activebackground="#c0392b",
+        activeforeground="white",
+        cursor="hand2",
+        command=lambda: clear_email_form()
+    )
+    clear_btn.pack(side="left", expand=True, fill="x", padx=(5, 0))
+    
+    # Configure grid weights
+    content_frame.grid_rowconfigure(0, weight=1)
+    content_frame.grid_columnconfigure(0, weight=1)
+    content_frame.grid_columnconfigure(1, weight=2)
+    
+    # Pack canvas and scrollbar
+    main_canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
+    # Helper functions
+    def generate_email_content():
+        """Generate email using AI"""
+        scenario = email_scenario_var.get()
+        supplier = email_supplier_var.get()
+        
+        if not supplier or supplier == "Tedarikçi bulunamadı":
+            messagebox.showwarning("Uyarı", "Lütfen bir tedarikçi seçin!")
+            return
+        
+        # Get supplier email (mock for now, should be from database)
+        supplier_email = f"{supplier.lower().replace(' ', '.')}@example.com"
+        
+        # Gather context data
+        context_data = {
+            "scenario": scenario
+        }
+        
+        # Add scenario-specific mock data
+        if scenario == "delay":
+            context_data["days_late"] = "3"
+            context_data["order_no"] = "DF-2024-12345"
+            context_data["planned_date"] = "15.02.2024"
+        elif scenario == "quality":
+            context_data["return_rate"] = "7.5"
+            context_data["issue_description"] = "Kumaş kalitesi standardın altında"
+        elif scenario == "price":
+            context_data["price_increase"] = "12"
+            context_data["product"] = "Pamuklu T-Shirt"
+        elif scenario == "meeting":
+            context_data["meeting_purpose"] = "Performans değerlendirmesi ve gelecek dönem planlaması"
+            context_data["suggested_date"] = "20.02.2024 - 14:00"
+        elif scenario == "document":
+            context_data["missing_docs"] = "ISO 9001 Belgesi, Çevre İzin Belgesi"
+            context_data["deadline"] = "28.02.2024"
+        elif scenario == "review":
+            context_data["performance_score"] = "85"
+            context_data["period"] = "Ocak 2024"
+        
+        # Show loading message
+        email_preview_text.delete("1.0", "end")
+        email_preview_text.insert("1.0", "🤖 AI email oluşturuyor...\n\nLütfen bekleyin...")
+        email_preview_text.update()
+        
+        # Generate email in background
+        def generate_in_thread():
+            result = generate_ai_email(scenario, supplier, supplier_email, context_data)
+            
+            def update_ui():
+                if result.get("success"):
+                    email_to_entry.delete(0, "end")
+                    email_to_entry.insert(0, result["to"])
+                    
+                    email_subject_entry.delete(0, "end")
+                    email_subject_entry.insert(0, result["subject"])
+                    
+                    email_preview_text.delete("1.0", "end")
+                    email_preview_text.insert("1.0", result["body"])
+                    
+                    messagebox.showinfo("Başarılı", "Email başarıyla oluşturuldu!\n\nİstediğiniz değişiklikleri yapabilir ve gönderebilirsiniz.")
+                else:
+                    email_preview_text.delete("1.0", "end")
+                    email_preview_text.insert("1.0", f"❌ Hata: {result.get('error', 'Bilinmeyen hata')}")
+                    messagebox.showerror("Hata", f"Email oluşturulamadı:\n{result.get('error', 'Bilinmeyen hata')}")
+            
+            email_preview_text.after(0, update_ui)
+        
+        threading.Thread(target=generate_in_thread, daemon=True).start()
+    
+    def send_generated_email():
+        """Send the generated email"""
+        to_email = email_to_entry.get().strip()
+        subject = email_subject_entry.get().strip()
+        body = email_preview_text.get("1.0", "end").strip()
+        
+        if not to_email or not subject or not body:
+            messagebox.showwarning("Uyarı", "Lütfen tüm alanları doldurun!")
+            return
+        
+        # Confirm before sending
+        if not messagebox.askyesno("Onayla", f"Email gönderilsin mi?\n\nKime: {to_email}\nKonu: {subject}"):
+            return
+        
+        try:
+            # Use existing email sending functionality
+            # Note: This assumes GMAIL credentials are configured
+            if GMAIL_USER and GMAIL_APP_PASSWORD:
+                msg = MIMEMultipart()
+                msg['From'] = GMAIL_USER
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                msg.attach(MIMEText(body, 'plain', 'utf-8'))
+                
+                server = smtplib.SMTP('smtp.gmail.com', 587)
+                server.starttls()
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.sendmail(GMAIL_USER, to_email, msg.as_string())
+                server.quit()
+                
+                # Log activity
+                if activity_logger:
+                    activity_logger.log_event(
+                        "EMAIL_SENT",
+                        "Email Automation",
+                        f"Email sent to {to_email}: {subject}"
+                    )
+                
+                messagebox.showinfo("Başarılı", f"Email başarıyla gönderildi!\n\nKime: {to_email}")
+                clear_email_form()
+            else:
+                messagebox.showwarning("Uyarı", "Email gönderimi için GMAIL ayarları yapılmamış!\n\nEmail içeriği panoya kopyalandı.")
+                root.clipboard_clear()
+                root.clipboard_append(f"To: {to_email}\nSubject: {subject}\n\n{body}")
+        
+        except Exception as e:
+            messagebox.showerror("Hata", f"Email gönderilemedi:\n{str(e)}")
+    
+    def save_email_draft():
+        """Save email as draft to file"""
+        to_email = email_to_entry.get().strip()
+        subject = email_subject_entry.get().strip()
+        body = email_preview_text.get("1.0", "end").strip()
+        
+        if not subject or not body:
+            messagebox.showwarning("Uyarı", "Email içeriği boş!")
+            return
+        
+        try:
+            from tkinter import filedialog
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                initialfile=f"Email_Taslak_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            )
+            
+            if filename:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(f"Kime: {to_email}\n")
+                    f.write(f"Konu: {subject}\n")
+                    f.write(f"\n{body}")
+                
+                messagebox.showinfo("Başarılı", f"Email taslağı kaydedildi:\n{filename}")
+        
+        except Exception as e:
+            messagebox.showerror("Hata", f"Taslak kaydedilemedi:\n{str(e)}")
+    
+    def clear_email_form():
+        """Clear all email fields"""
+        email_to_entry.delete(0, "end")
+        email_subject_entry.delete(0, "end")
+        email_preview_text.delete("1.0", "end")
+
 # ========== DOĞAL DİL SORGU MOTORU (NATURAL LANGUAGE QUERY ENGINE) ==========
 
 def init_natural_language_query_tab():
@@ -9462,6 +9971,9 @@ frame_stok = ttk.Frame(content_area, padding="10")
 # Tedarikçi Uyumluluk Merkezi Frame
 frame_compliance = ttk.Frame(content_area, padding="10")
 
+# Akıllı Email Otomasyonu Frame
+frame_email_automation = ttk.Frame(content_area, padding="10")
+
 # Doğal Dil Sorgu Motoru Frame
 frame_nlq = ttk.Frame(content_area, padding="10")
 
@@ -9498,6 +10010,8 @@ frames = {
     "Stok Yönetimi": frame_stok,
     # Tedarikçi Uyumluluk Merkezi
     "Tedarikçi Uyumluluk": frame_compliance,
+    # Akıllı Email Otomasyonu
+    "Akıllı Email": frame_email_automation,
     # Doğal Dil Sorgu Motoru
     "Doğal Dil Sorguları": frame_nlq
 }
@@ -9507,6 +10021,7 @@ menu_items = [
     ("🔍 Analiz & Veri", "Analiz"),
     ("🛒 Akıllı Sipariş", "Akıllı Sipariş"),
     ("💰 Pazarlık Robotu", "Pazarlık Robotu"), 
+    ("📧 Akıllı Email", "Akıllı Email"), # YENİ! Email Otomasyonu
     ("🗣️ Doğal Dil Sorguları", "Doğal Dil Sorguları"), # YENİ! EN ÖNEMLİ MODÜL
     ("📰 Sektör Haberleri", "Sektör Haberleri"), # YENİ BUTON
     ("🔮 Trend Avcısı", "Trend Avcısı"), # TREND HUNTER
@@ -9544,6 +10059,7 @@ status_label.pack(side="bottom", fill="x")
 draw_dashboard(frame_ozet)
 init_map_tab() 
 init_chat_tab() 
+init_email_automation_tab()  # Akıllı Email Otomasyonu - YENİ!
 init_natural_language_query_tab()  # Doğal Dil Sorgu Motoru - EN ÖNEMLİ MODÜL!
 init_scorecard_tab() 
 init_ocr_tab() 
