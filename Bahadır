@@ -9213,6 +9213,37 @@ def open_reply_dialog(email_id):
     button_frame = tk.Frame(reply_window, bg="#f0f0f0")
     button_frame.pack(fill="x", padx=20, pady=10)
     
+    def generate_ai_reply():
+        """Use AI to generate reply content"""
+        try:
+            # Prepare context from original email
+            context = {
+                "original_subject": email_data['subject'],
+                "original_body": email_data['body'][:500] if len(email_data['body']) > 500 else email_data['body'],
+                "from_email": email_data['from']
+            }
+            
+            # Show processing message
+            messagebox.showinfo("Lütfen Bekleyin", "AI cevap hazırlanıyor...")
+            
+            # Generate AI reply
+            result = generate_ai_email(
+                scenario="Cevap",
+                supplier_data={"name": email_data['from']},
+                context=f"Orijinal email konusu: {email_data['subject']}\nOrijinal içerik: {email_data['body'][:300]}"
+            )
+            
+            if result.get('success'):
+                # Clear and insert AI-generated content
+                body_text.delete("1.0", "end")
+                body_text.insert("1.0", result.get('body', ''))
+                messagebox.showinfo("Başarılı", "AI ile cevap hazırlandı! İstediğiniz değişiklikleri yapabilirsiniz.")
+            else:
+                messagebox.showerror("Hata", result.get('error', 'AI cevap oluşturulamadı'))
+                
+        except Exception as e:
+            messagebox.showerror("Hata", f"AI hatası:\n{str(e)}")
+    
     def send_reply():
         """Send the reply email"""
         to_addr = to_entry.get().strip()
@@ -9224,8 +9255,8 @@ def open_reply_dialog(email_id):
             return
         
         try:
-            # Send email using existing function
-            success, message = send_email_smtp(to_addr, subject, body)
+            # Send email using existing function with correct name
+            success, message = send_email_with_attachments(to_addr, subject, body, [])
             
             if success:
                 # Mark original as replied
@@ -9237,6 +9268,20 @@ def open_reply_dialog(email_id):
                 
         except Exception as e:
             messagebox.showerror("Hata", f"Email gönderme hatası:\n{str(e)}")
+    
+    # AI Generation Button
+    ai_btn = tk.Button(
+        button_frame,
+        text="🤖 AI ile Hazırla",
+        font=("Segoe UI", 10, "bold"),
+        bg="#9b59b6",
+        fg="white",
+        cursor="hand2",
+        command=generate_ai_reply,
+        padx=20,
+        pady=10
+    )
+    ai_btn.pack(side="left", padx=5)
     
     send_btn = tk.Button(
         button_frame,
