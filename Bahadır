@@ -23,6 +23,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+import imaplib  # IMAP email reading
+import email  # Email parsing
+from email.header import decode_header  # Email header decoding
+import sqlite3  # Local email database
+import html  # HTML escaping
 import getpass
 import socket
 import math # Matematiksel hesaplamalar için
@@ -251,6 +256,9 @@ gantt_canvas_global = None
 commodity_prices_global = {}
 commodity_history_global = {}
 
+# Akıllı Eylem Önerileri Global Değişkenler
+action_recommendations_container = None
+
 # Frame Yönetimi Global Değişkenler
 frames = {} 
 menu_buttons = {} 
@@ -265,6 +273,7 @@ class ActivityLogger:
         self.machine_name = socket.gethostname()
         self.session_start = datetime.datetime.now()
         self.log_file = f"activity_logs_{datetime.date.today()}.json"
+        self.excel_log_path = r"X:\01.Public\TEDARİKÇİ PERFORMANS\LOGKAYIT\Log Kayıtları.xlsx"
         self.activity_data = defaultdict(lambda: {
             'clicks': 0,
             'first_access': None,
@@ -304,6 +313,9 @@ class ActivityLogger:
         
         # Save to JSON file
         self._save_to_file()
+        
+        # Save to Excel file
+        self._save_to_excel(event_data)
         
     def log_page_visit(self, page_name):
         """Sayfa ziyareti loglama"""
@@ -372,6 +384,86 @@ class ActivityLogger:
             
         except Exception as e:
             logging.error(f"Log dosyasına yazma hatası: {str(e)}")
+    
+    def _save_to_excel(self, event_data):
+        """Log verilerini Excel dosyasına kaydet"""
+        try:
+            from openpyxl import load_workbook, Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            
+            # Dizin yoksa oluştur
+            excel_dir = os.path.dirname(self.excel_log_path)
+            if not os.path.exists(excel_dir):
+                try:
+                    os.makedirs(excel_dir)
+                except:
+                    pass  # Ağ yolu olabilir, hata görmezden gel
+            
+            # Excel dosyasını aç veya oluştur
+            if os.path.exists(self.excel_log_path):
+                try:
+                    wb = load_workbook(self.excel_log_path)
+                    if "Log Kayıtları" in wb.sheetnames:
+                        ws = wb["Log Kayıtları"]
+                    else:
+                        ws = wb.create_sheet("Log Kayıtları")
+                        # Başlık satırını ekle
+                        ws.append(["Tarih/Saat", "Kullanıcı", "Makine", "İşlem Tipi", "Sayfa", "Detaylar"])
+                        # Başlık formatı
+                        for cell in ws[1]:
+                            cell.font = Font(bold=True, color="FFFFFF")
+                            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                            cell.alignment = Alignment(horizontal="center", vertical="center")
+                except Exception as e:
+                    # Dosya kilitli olabilir, yeni workbook oluştur
+                    logging.warning(f"Excel dosyası açılamadı, yeni oluşturuluyor: {str(e)}")
+                    wb = Workbook()
+                    ws = wb.active
+                    ws.title = "Log Kayıtları"
+                    ws.append(["Tarih/Saat", "Kullanıcı", "Makine", "İşlem Tipi", "Sayfa", "Detaylar"])
+                    for cell in ws[1]:
+                        cell.font = Font(bold=True, color="FFFFFF")
+                        cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Log Kayıtları"
+                # Başlık satırı
+                ws.append(["Tarih/Saat", "Kullanıcı", "Makine", "İşlem Tipi", "Sayfa", "Detaylar"])
+                for cell in ws[1]:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Yeni log kaydını ekle
+            ws.append([
+                event_data['timestamp'],
+                event_data['user'],
+                event_data['machine'],
+                event_data['event_type'],
+                event_data['page'],
+                event_data['details']
+            ])
+            
+            # Sütun genişliklerini ayarla
+            ws.column_dimensions['A'].width = 20  # Tarih/Saat
+            ws.column_dimensions['B'].width = 15  # Kullanıcı
+            ws.column_dimensions['C'].width = 15  # Makine
+            ws.column_dimensions['D'].width = 20  # İşlem Tipi
+            ws.column_dimensions['E'].width = 25  # Sayfa
+            ws.column_dimensions['F'].width = 50  # Detaylar
+            
+            # Kaydet
+            wb.save(self.excel_log_path)
+            
+        except Exception as e:
+            # Excel kaydetme hatası - sessizce devam et
+            logging.warning(f"Excel log kaydedilemedi: {str(e)}")
+    
+    def log_activity(self, details, page=None):
+        """Genel aktivite loglama - kısa yol"""
+        self.log_event("ACTIVITY", details, page)
     
     def get_session_duration(self):
         """Oturum süresini hesapla"""
@@ -4467,7 +4559,7 @@ def show_scorecard():
     tree_r.column("Stok Grubu", width=120, anchor="w")
     tree_r.pack(fill="both", expand=True)
 
-    if not detay_rows.empty and stok_grup_col_global:
+    if not detay_rows.empty and stok_grup_col_global and stok_grup_col_global in detay_rows.columns:
         fiyat_col = find_col_by_keywords(detay_rows, ['fiyat','price'])
         teslim_col = find_col_by_keywords(detay_rows, ['teslim','delivery'])
         iade_col = find_col_by_keywords(detay_rows, ['iade','return'])
@@ -4502,7 +4594,7 @@ def show_scorecard():
         tree_calc.heading(col, text=col)
         tree_calc.column(col, anchor="center")
     
-    if not detay_rows.empty and stok_grup_col_global:
+    if not detay_rows.empty and stok_grup_col_global and stok_grup_col_global in detay_rows.columns:
         for idx, r in detay_rows.iterrows():
             tree_calc.insert("", "end", values=(
                 r[stok_grup_col_global],
@@ -4518,7 +4610,7 @@ def show_scorecard():
     logic_frame.pack(fill="x", padx=20, pady=10)
     
     logic_text = ""
-    if not detay_rows.empty and stok_grup_col_global:
+    if not detay_rows.empty and stok_grup_col_global and stok_grup_col_global in detay_rows.columns:
         r = detay_rows.iloc[0]  # İlk satırı örnek olarak al
         fiyat_col = find_col_by_keywords(detay_rows, ['fiyat','price'])
         teslim_col = find_col_by_keywords(detay_rows, ['teslim','delivery'])
@@ -4553,8 +4645,22 @@ def show_scorecard():
     ai_lbl.pack(fill="x", expand=True)
     
     def fetch_comment():
-        comment = get_scorecard_ai_comment(row, grade, description)
-        ai_lbl.configure(text=comment)
+        try:
+            comment = get_scorecard_ai_comment(row, grade, description)
+            # Use after() to update GUI from main thread (Tkinter is not thread-safe)
+            # Check if widget still exists before updating
+            try:
+                if ai_lbl.winfo_exists():
+                    ai_lbl.after(0, lambda: ai_lbl.configure(text=comment))
+            except:
+                pass  # Widget was destroyed, ignore
+        except Exception as e:
+            # Handle any errors during AI comment generation
+            try:
+                if ai_lbl.winfo_exists():
+                    ai_lbl.after(0, lambda: ai_lbl.configure(text=f"AI yorumu alınamadı: {str(e)}"))
+            except:
+                pass
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 def export_scorecard_pdf():
@@ -4566,26 +4672,39 @@ def export_scorecard_pdf():
     pdf = FPDF()
     pdf.add_page()
     
+    # Try to use Unicode font for Turkish characters
+    use_unicode = False
     if os.path.exists('DejaVuSans.ttf'):
-        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-        pdf.set_font('DejaVu', '', 14)
-    else:
+        try:
+            pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+            pdf.set_font('DejaVu', '', 14)
+            use_unicode = True
+        except:
+            pass
+    
+    if not use_unicode:
+        # Fallback to Arial and transliterate Turkish characters
         pdf.set_font("Arial", size=12)
+        supplier_name = transliterate_turkish(supplier_name)
+        desc = transliterate_turkish(desc)
         
-    pdf.cell(0, 10, f"TEDARİKÇİ KARNESİ: {supplier_name}", ln=True, align='C')
+    pdf.cell(0, 10, f"TEDARIKCI KARNESI: {supplier_name}", ln=True, align='C')
     pdf.ln(10)
     
     pdf.set_font_size(20)
     pdf.cell(0, 10, f"GENEL NOT: {grade}", ln=True, align='C')
     pdf.set_font_size(12)
-    pdf.cell(0, 10, f"Açıklama: {desc}", ln=True, align='C')
+    pdf.cell(0, 10, f"Aciklama: {desc}", ln=True, align='C')
     pdf.cell(0, 10, f"Performans Skoru: {row['Skor']:.2f}", ln=True, align='C')
-    pdf.cell(0, 10, f"ABC Sinifi (Pareto): {row.get('Pareto_Sinifi', '-')}", ln=True, align='C')
+    pareto_val = row.get('Pareto_Sinifi', '-')
+    if not use_unicode:
+        pareto_val = transliterate_turkish(str(pareto_val))
+    pdf.cell(0, 10, f"ABC Sinifi (Pareto): {pareto_val}", ln=True, align='C')
     pdf.ln(20)
     
     col_width = 45
     pdf.cell(col_width, 10, "Kriter", 1)
-    pdf.cell(col_width, 10, "Değer", 1)
+    pdf.cell(col_width, 10, "Deger", 1)
     pdf.ln()
     
     metrics = {
@@ -4596,6 +4715,9 @@ def export_scorecard_pdf():
     }
     
     for k, v in metrics.items():
+        if not use_unicode:
+            k = transliterate_turkish(k)
+            v = transliterate_turkish(str(v))
         pdf.cell(col_width, 10, k, 1)
         pdf.cell(col_width, 10, str(v), 1)
         pdf.ln()
@@ -4603,7 +4725,7 @@ def export_scorecard_pdf():
     filename = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile=f"Karne_{supplier_name}.pdf")
     if filename:
         pdf.output(filename)
-        messagebox.showinfo("Başarılı", "PDF kaydedildi.")
+        messagebox.showinfo("Basarili", "PDF kaydedildi.")
 
 # ---------- TREND ANALİZİ VE AI ----------
 def get_trend_ai_comment(trend_data_str):
@@ -6172,6 +6294,344 @@ def find_col_by_keywords(df, keywords):
         if any(k in str(col).lower() for k in keywords): return col
     return None
 
+def transliterate_turkish(text):
+    """Convert Turkish characters to ASCII equivalents for PDF compatibility."""
+    if not isinstance(text, str):
+        return str(text)
+    turkish_map = {
+        'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
+        'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S',
+        'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
+    }
+    for turkish, ascii_char in turkish_map.items():
+        text = text.replace(turkish, ascii_char)
+    return text
+
+def predict_supplier_risks_ai(supplier_data, historical_trends=None):
+    """
+    AI-powered predictive risk analysis for suppliers.
+    Analyzes patterns and predicts potential future issues.
+    
+    Args:
+        supplier_data: DataFrame or dict with supplier metrics
+        historical_trends: Optional historical data for trend analysis
+    
+    Returns:
+        dict with risk predictions, scores, and recommendations
+    """
+    if not GEMINI_API_KEY:
+        return {"error": "API anahtarı bulunamadı", "risk_level": "unknown"}
+    
+    try:
+        # Prepare data summary for AI
+        if isinstance(supplier_data, pd.DataFrame):
+            data_summary = supplier_data.head(50).to_dict(orient='records')
+        else:
+            data_summary = supplier_data
+        
+        # Build comprehensive prompt for predictive analysis
+        prompt = f"""Sen bir tedarik zinciri risk analisti ve tahmincisin. Aşağıdaki tedarikçi verilerini analiz et ve gelecekteki potansiyel riskleri tahmin et:
+
+MEVCUT VERİLER:
+{json.dumps(data_summary, ensure_ascii=False, indent=2)[:3000]}
+
+GÖREVİN:
+1. Her tedarikçi için risk seviyesini tahmin et (YÜKSEK/ORTA/DÜŞÜK)
+2. Potansiyel sorunları öngör (kalite, teslimat, fiyat artışı, vb.)
+3. Risk göstergeleri ve erken uyarı sinyalleri belirt
+4. Önleyici aksiyonlar öner
+5. En riskli 3 tedarikçiyi ve nedenlerini açıkla
+6. Gelecek 3 ay için tahminler yap
+
+ÇIKTI FORMATI (JSON):
+{{
+  "overall_risk_score": 0-100,
+  "high_risk_suppliers": ["supplier1", "supplier2"],
+  "risk_predictions": {{
+    "supplier_name": {{
+      "risk_level": "HIGH/MEDIUM/LOW",
+      "probability": 0-100,
+      "predicted_issues": ["issue1", "issue2"],
+      "early_warning_signs": ["sign1", "sign2"],
+      "recommended_actions": ["action1", "action2"],
+      "timeline": "next 1-3 months"
+    }}
+  }},
+  "market_trends": "trend analysis",
+  "summary": "executive summary in Turkish"
+}}
+
+Lütfen detaylı ve eylem odaklı tahminler yap."""
+
+        # Call Gemini API
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 2048
+            }
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        
+        if response.status_code == 200:
+            result = response.json()
+            ai_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            
+            # Try to parse JSON response
+            try:
+                # Extract JSON from markdown code blocks if present
+                if "```json" in ai_text:
+                    json_start = ai_text.find("```json") + 7
+                    json_end = ai_text.find("```", json_start)
+                    ai_text = ai_text[json_start:json_end].strip()
+                elif "```" in ai_text:
+                    json_start = ai_text.find("```") + 3
+                    json_end = ai_text.find("```", json_start)
+                    ai_text = ai_text[json_start:json_end].strip()
+                
+                predictions = json.loads(ai_text)
+                predictions["raw_response"] = ai_text
+                predictions["status"] = "success"
+                return predictions
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return as text
+                return {
+                    "status": "success",
+                    "raw_response": ai_text,
+                    "summary": ai_text,
+                    "overall_risk_score": 50  # Default moderate risk
+                }
+        else:
+            return {
+                "error": f"API hatası: {response.status_code}",
+                "status": "error"
+            }
+    
+    except Exception as e:
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+def show_predictive_analytics_window():
+    """Display predictive risk analysis in a new window"""
+    global sonuc_global, df_global
+    
+    if sonuc_global is None or df_global is None:
+        messagebox.showwarning("Uyarı", "Önce veri analizi yapmalısınız!")
+        return
+    
+    # Create new window
+    pred_window = tk.Toplevel(root)
+    pred_window.title("🔮 AI Tahmine Dayalı Risk Analizi")
+    pred_window.geometry("1000x700")
+    pred_window.configure(bg="#f0f2f5")
+    
+    # Header
+    header_frame = tk.Frame(pred_window, bg="#2c3e50", height=80)
+    header_frame.pack(fill="x")
+    header_frame.pack_propagate(False)
+    
+    tk.Label(
+        header_frame,
+        text="🔮 Yapay Zeka Destekli Tahmine Dayalı Risk Analizi",
+        font=("Segoe UI", 16, "bold"),
+        bg="#2c3e50",
+        fg="white"
+    ).pack(pady=25)
+    
+    # Main content frame with scrollbar
+    main_frame = tk.Frame(pred_window, bg="#f0f2f5")
+    main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    
+    canvas = tk.Canvas(main_frame, bg="#f0f2f5")
+    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+    scrollable_frame = tk.Frame(canvas, bg="#f0f2f5")
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
+    # Status label
+    status_label = tk.Label(
+        scrollable_frame,
+        text="🤖 AI analizi başlatılıyor...",
+        font=("Segoe UI", 12),
+        bg="#f0f2f5",
+        fg="#555"
+    )
+    status_label.pack(pady=20)
+    
+    # Progress bar
+    progress = ttk.Progressbar(scrollable_frame, mode='indeterminate', length=400)
+    progress.pack(pady=10)
+    progress.start()
+    
+    # Result text widget
+    result_frame = tk.Frame(scrollable_frame, bg="white", relief="solid", borderwidth=1)
+    result_frame.pack(fill="both", expand=True, pady=20, padx=10)
+    
+    result_text = tk.Text(
+        result_frame,
+        wrap="word",
+        font=("Segoe UI", 10),
+        bg="white",
+        fg="#333",
+        padx=15,
+        pady=15
+    )
+    result_text.pack(fill="both", expand=True)
+    
+    # Configure text tags for formatting
+    result_text.tag_config("title", font=("Segoe UI", 14, "bold"), foreground="#2c3e50")
+    result_text.tag_config("subtitle", font=("Segoe UI", 12, "bold"), foreground="#34495e")
+    result_text.tag_config("high_risk", font=("Segoe UI", 10, "bold"), foreground="#e74c3c")
+    result_text.tag_config("medium_risk", font=("Segoe UI", 10), foreground="#f39c12")
+    result_text.tag_config("low_risk", font=("Segoe UI", 10), foreground="#27ae60")
+    result_text.tag_config("action", font=("Segoe UI", 10), foreground="#3498db")
+    
+    def run_prediction():
+        """Run prediction in background thread"""
+        try:
+            # Get predictions from AI
+            predictions = predict_supplier_risks_ai(sonuc_global, df_global)
+            
+            # Update UI on main thread
+            def update_ui():
+                progress.stop()
+                progress.pack_forget()
+                status_label.configure(text="✅ Analiz tamamlandı!")
+                
+                result_text.delete("1.0", tk.END)
+                
+                if predictions.get("status") == "error":
+                    result_text.insert(tk.END, "❌ Hata Oluştu\n\n", "title")
+                    result_text.insert(tk.END, f"Hata: {predictions.get('error', 'Bilinmeyen hata')}\n")
+                    return
+                
+                # Display results
+                result_text.insert(tk.END, "🔮 TAHMİNE DAYALI RİSK ANALİZİ\n\n", "title")
+                result_text.insert(tk.END, f"Analiz Tarihi: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n")
+                
+                # Overall risk score
+                if "overall_risk_score" in predictions:
+                    score = predictions["overall_risk_score"]
+                    result_text.insert(tk.END, f"📊 Genel Risk Skoru: {score}/100\n\n", "subtitle")
+                    
+                    if score >= 70:
+                        result_text.insert(tk.END, "⚠️ YÜKSEK RİSK SEVİYESİ\n\n", "high_risk")
+                    elif score >= 40:
+                        result_text.insert(tk.END, "⚡ ORTA RİSK SEVİYESİ\n\n", "medium_risk")
+                    else:
+                        result_text.insert(tk.END, "✅ DÜŞÜK RİSK SEVİYESİ\n\n", "low_risk")
+                
+                # High risk suppliers
+                if "high_risk_suppliers" in predictions and predictions["high_risk_suppliers"]:
+                    result_text.insert(tk.END, "🚨 Yüksek Riskli Tedarikçiler:\n", "subtitle")
+                    for supplier in predictions["high_risk_suppliers"]:
+                        result_text.insert(tk.END, f"  • {supplier}\n", "high_risk")
+                    result_text.insert(tk.END, "\n")
+                
+                # Risk predictions by supplier
+                if "risk_predictions" in predictions:
+                    result_text.insert(tk.END, "📋 Tedarikçi Bazında Risk Tahminleri:\n\n", "subtitle")
+                    for supplier, pred in predictions["risk_predictions"].items():
+                        result_text.insert(tk.END, f"▶ {supplier}\n", "subtitle")
+                        
+                        risk_level = pred.get("risk_level", "UNKNOWN")
+                        tag = "high_risk" if risk_level == "HIGH" else "medium_risk" if risk_level == "MEDIUM" else "low_risk"
+                        result_text.insert(tk.END, f"   Risk Seviyesi: {risk_level}\n", tag)
+                        
+                        if "probability" in pred:
+                            result_text.insert(tk.END, f"   Olasılık: %{pred['probability']}\n")
+                        
+                        if "predicted_issues" in pred:
+                            result_text.insert(tk.END, "   Tahmini Sorunlar:\n")
+                            for issue in pred["predicted_issues"]:
+                                result_text.insert(tk.END, f"     • {issue}\n")
+                        
+                        if "recommended_actions" in pred:
+                            result_text.insert(tk.END, "   Önerilen Aksiyonlar:\n", "action")
+                            for action in pred["recommended_actions"]:
+                                result_text.insert(tk.END, f"     ✓ {action}\n", "action")
+                        
+                        result_text.insert(tk.END, "\n")
+                
+                # Summary
+                if "summary" in predictions:
+                    result_text.insert(tk.END, "📝 Yönetici Özeti:\n", "subtitle")
+                    result_text.insert(tk.END, f"{predictions['summary']}\n\n")
+                
+                # Raw response if structured data not available
+                if "raw_response" in predictions and not "risk_predictions" in predictions:
+                    result_text.insert(tk.END, predictions["raw_response"])
+                
+                result_text.configure(state="disabled")
+            
+            pred_window.after(0, update_ui)
+            
+        except Exception as e:
+            def show_error():
+                progress.stop()
+                status_label.configure(text=f"❌ Hata: {str(e)}")
+            pred_window.after(0, show_error)
+    
+    # Start prediction in background thread
+    threading.Thread(target=run_prediction, daemon=True).start()
+    
+    # Button frame
+    button_frame = tk.Frame(pred_window, bg="#f0f2f5")
+    button_frame.pack(fill="x", padx=20, pady=10)
+    
+    ttk.Button(
+        button_frame,
+        text="🔄 Yenile",
+        command=lambda: (result_text.delete("1.0", tk.END), 
+                        status_label.configure(text="🤖 Yeniden analiz ediliyor..."),
+                        progress.pack(pady=10),
+                        progress.start(),
+                        threading.Thread(target=run_prediction, daemon=True).start())
+    ).pack(side="left", padx=5)
+    
+    ttk.Button(
+        button_frame,
+        text="💾 Raporu Kaydet",
+        command=lambda: save_prediction_report(result_text.get("1.0", tk.END))
+    ).pack(side="left", padx=5)
+    
+    ttk.Button(
+        button_frame,
+        text="❌ Kapat",
+        command=pred_window.destroy
+    ).pack(side="right", padx=5)
+
+def save_prediction_report(content):
+    """Save prediction report to file"""
+    try:
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=f"Risk_Tahmini_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        )
+        if filename:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(content)
+            messagebox.showinfo("Başarılı", f"Rapor kaydedildi:\n{filename}")
+    except Exception as e:
+        messagebox.showerror("Hata", f"Rapor kaydedilemedi: {str(e)}")
+
 def ask_user_to_pick_column(cols):
     win = tk.Toplevel(); win.title("Kolon Seç"); tk.Label(win, text="Seçim yapın:").pack()
     combo = ttk.Combobox(win, values=cols, state="readonly"); combo.pack()
@@ -6267,8 +6727,10 @@ def _update_ai_comment_tab(message, en_iyi_df):
     
     style = ttk.Style()
     style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"))
+    style.configure("Predictive.TButton", font=("Segoe UI", 9, "bold"), foreground="#9b59b6")
     
     ttk.Button(bf, text="🏆 En İyi Tedarikçiyi Göster", style="Accent.TButton", command=lambda: show_best_supplier(en_iyi_df)).pack(side="left", padx=5)
+    ttk.Button(bf, text="🔮 Tahmine Dayalı Risk Analizi", style="Predictive.TButton", command=show_predictive_analytics_window).pack(side="left", padx=5)
     ttk.Button(bf, text="💾 Yorumu Kaydet (TXT)", command=lambda: export_ai_comment("txt")).pack(side="left", padx=5)
     ttk.Button(bf, text="📄 Yorumu Kaydet (PDF)", command=lambda: export_ai_comment("pdf")).pack(side="left", padx=5)
 
@@ -6498,7 +6960,8 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         if stok_grup_col:
             # Pazar ortalamaları (kıyaslama için)
             market_averages_global = df_analiz.groupby(stok_grup_col)[[fiyat_col, teslim_col, iade_col]].mean()
-            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring)
+            # Use include_groups=False (new pandas default) and group_keys=True to preserve grouping column via index
+            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=True).apply(apply_scoring, include_groups=False).reset_index(level=0, drop=False)
         else:
             sonuc_grouped = apply_scoring(sonuc_grouped)
 
@@ -7550,58 +8013,2687 @@ def send_compliance_email(supplier_email, supplier_name, compliance_data, ai_mes
 
 # ========== END OF AI HELPER FUNCTIONS ==========
 
+# ========== EMAIL INBOX MANAGEMENT (GELEN KUTUSU YÖNETİMİ) ==========
+
+# Email database initialization
+EMAIL_DB_PATH = "email_inbox.db"
+
+def init_email_database():
+    """Initialize SQLite database for email storage"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        # Emails table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT UNIQUE,
+                from_addr TEXT NOT NULL,
+                to_addr TEXT,
+                subject TEXT,
+                body TEXT,
+                html_body TEXT,
+                date TIMESTAMP,
+                read INTEGER DEFAULT 0,
+                replied INTEGER DEFAULT 0,
+                supplier_name TEXT,
+                folder TEXT DEFAULT 'INBOX',
+                raw_email TEXT
+            )
+        ''')
+        
+        # Email threads table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS email_threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT NOT NULL,
+                parent_message_id TEXT,
+                child_message_id TEXT,
+                level INTEGER DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Database init error: {e}")
+        return False
+
+def fetch_emails_from_imap(limit=50):
+    """Fetch emails from Gmail IMAP server"""
+    try:
+        if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+            return [], "Email credentials not configured"
+        
+        # Connect to Gmail IMAP
+        imap = imaplib.IMAP4_SSL('imap.gmail.com')
+        imap.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        imap.select('INBOX')
+        
+        # Search for all emails (or recent ones)
+        status, messages = imap.search(None, 'ALL')
+        if status != 'OK':
+            return [], "Failed to search emails"
+        
+        email_ids = messages[0].split()
+        email_ids = email_ids[-limit:]  # Get last N emails
+        email_ids.reverse()  # Most recent first
+        
+        emails = []
+        for email_id in email_ids:
+            try:
+                status, msg_data = imap.fetch(email_id, '(RFC822)')
+                if status != 'OK':
+                    continue
+                
+                email_body = msg_data[0][1]
+                email_message = email.message_from_bytes(email_body)
+                
+                # Parse email
+                parsed_email = parse_email_message(email_message)
+                if parsed_email:
+                    emails.append(parsed_email)
+                    
+            except Exception as e:
+                print(f"Error parsing email {email_id}: {e}")
+                continue
+        
+        imap.close()
+        imap.logout()
+        
+        return emails, None
+        
+    except Exception as e:
+        return [], f"IMAP error: {str(e)}"
+
+def parse_email_message(email_message):
+    """Parse email message and extract relevant information"""
+    try:
+        # Get subject
+        subject = email_message.get('Subject', '')
+        if subject:
+            decoded_subject = decode_header(subject)[0]
+            if isinstance(decoded_subject[0], bytes):
+                subject = decoded_subject[0].decode(decoded_subject[1] or 'utf-8')
+            else:
+                subject = decoded_subject[0]
+        
+        # Get from address
+        from_addr = email_message.get('From', '')
+        
+        # Get date - parse and convert to sortable ISO format
+        date_str = email_message.get('Date', '')
+        if date_str:
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(date_str)
+                # Convert to ISO format for proper sorting
+                date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            except:
+                pass  # Keep original if parsing fails
+        
+        # Get message ID
+        message_id = email_message.get('Message-ID', '')
+        
+        # Get body
+        body = ""
+        html_body = ""
+        
+        if email_message.is_multipart():
+            for part in email_message.walk():
+                content_type = part.get_content_type()
+                content_disposition = str(part.get('Content-Disposition'))
+                
+                if 'attachment' not in content_disposition:
+                    if content_type == 'text/plain':
+                        try:
+                            body = part.get_payload(decode=True).decode()
+                        except:
+                            body = str(part.get_payload())
+                    elif content_type == 'text/html':
+                        try:
+                            html_body = part.get_payload(decode=True).decode()
+                        except:
+                            html_body = str(part.get_payload())
+        else:
+            try:
+                body = email_message.get_payload(decode=True).decode()
+            except:
+                body = str(email_message.get_payload())
+        
+        return {
+            'message_id': message_id,
+            'from': from_addr,
+            'subject': subject,
+            'date': date_str,
+            'body': body,
+            'html_body': html_body,
+            'read': 0
+        }
+        
+    except Exception as e:
+        print(f"Error parsing email: {e}")
+        return None
+
+def save_email_to_db(email_data):
+    """Save email to local database"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        # Use INSERT OR REPLACE to update existing emails (handles replies/updates)
+        cursor.execute('''
+            INSERT OR REPLACE INTO emails 
+            (message_id, from_addr, subject, body, html_body, date, read)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            email_data['message_id'],
+            email_data['from'],
+            email_data['subject'],
+            email_data['body'],
+            email_data['html_body'],
+            email_data['date'],
+            email_data['read']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error saving email: {e}")
+        return False
+
+def get_emails_from_db(limit=100, unread_only=False):
+    """Get emails from local database"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        if unread_only:
+            cursor.execute('''
+                SELECT id, from_addr, subject, date, read, replied 
+                FROM emails 
+                WHERE read = 0
+                ORDER BY date DESC 
+                LIMIT ?
+            ''', (limit,))
+        else:
+            cursor.execute('''
+                SELECT id, from_addr, subject, date, read, replied 
+                FROM emails 
+                ORDER BY date DESC 
+                LIMIT ?
+            ''', (limit,))
+        
+        emails = cursor.fetchall()
+        conn.close()
+        return emails
+    except Exception as e:
+        print(f"Error getting emails: {e}")
+        return []
+
+def get_email_body(email_id):
+    """Get full email body by ID"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT from_addr, subject, body, html_body, date
+            FROM emails 
+            WHERE id = ?
+        ''', (email_id,))
+        
+        email = cursor.fetchone()
+        conn.close()
+        
+        if email:
+            return {
+                'from': email[0],
+                'subject': email[1],
+                'body': email[2],
+                'html_body': email[3],
+                'date': email[4]
+            }
+        return None
+    except Exception as e:
+        print(f"Error getting email body: {e}")
+        return None
+
+def mark_email_as_read(email_id):
+    """Mark email as read"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE emails SET read = 1 WHERE id = ?', (email_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error marking email as read: {e}")
+        return False
+
+def mark_email_as_replied(email_id):
+    """Mark email as replied"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE emails SET replied = 1 WHERE id = ?', (email_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error marking email as replied: {e}")
+        return False
+
+# ========== END OF EMAIL INBOX MANAGEMENT ==========
+
+# ========== AKILLİ EMAIL OTOMASYONU (INTELLIGENT EMAIL AUTOMATION) ==========
+
+def generate_ai_email(scenario, supplier_name, supplier_email, context_data=None):
+    """
+    AI-powered email generation for various supplier communication scenarios
+    
+    Args:
+        scenario: Email type (delay, quality, price, meeting, document, review, thanks, warning)
+        supplier_name: Name of the supplier
+        supplier_email: Email address of supplier
+        context_data: Dictionary with relevant context (dates, amounts, issues, etc.)
+    
+    Returns:
+        Dictionary with email details (subject, body, priority)
+    """
+    if not context_data:
+        context_data = {}
+    
+    # Prepare context for AI
+    context_str = f"""
+Tedarikçi: {supplier_name}
+Email: {supplier_email}
+Senaryo: {scenario}
+"""
+    
+    # Add scenario-specific context
+    if scenario == "delay" and context_data.get("days_late"):
+        context_str += f"Gecikme Süresi: {context_data['days_late']} gün\n"
+        if context_data.get("order_no"):
+            context_str += f"Sipariş No: {context_data['order_no']}\n"
+        if context_data.get("planned_date"):
+            context_str += f"Planlanan Tarih: {context_data['planned_date']}\n"
+    
+    elif scenario == "quality" and context_data.get("return_rate"):
+        context_str += f"İade Oranı: %{context_data['return_rate']}\n"
+        if context_data.get("issue_description"):
+            context_str += f"Sorun: {context_data['issue_description']}\n"
+    
+    elif scenario == "price" and context_data.get("price_increase"):
+        context_str += f"Fiyat Artışı: %{context_data['price_increase']}\n"
+        if context_data.get("product"):
+            context_str += f"Ürün: {context_data['product']}\n"
+    
+    elif scenario == "meeting":
+        if context_data.get("meeting_purpose"):
+            context_str += f"Toplantı Amacı: {context_data['meeting_purpose']}\n"
+        if context_data.get("suggested_date"):
+            context_str += f"Önerilen Tarih: {context_data['suggested_date']}\n"
+    
+    elif scenario == "document":
+        if context_data.get("missing_docs"):
+            context_str += f"Eksik Evraklar: {context_data['missing_docs']}\n"
+        if context_data.get("deadline"):
+            context_str += f"Son Tarih: {context_data['deadline']}\n"
+    
+    elif scenario == "review":
+        if context_data.get("performance_score"):
+            context_str += f"Performans Skoru: {context_data['performance_score']}/100\n"
+        if context_data.get("period"):
+            context_str += f"Değerlendirme Dönemi: {context_data['period']}\n"
+    
+    # Create AI prompt
+    prompt = f"""Sen profesyonel bir tedarikçi ilişkileri uzmanısın. Aşağıdaki bilgilere göre Türkçe, profesyonel ve nezaket kurallarına uygun bir iş emaili oluştur.
+
+{context_str}
+
+Email Gereksinimleri:
+1. Konu başlığı kısa ve öz olmalı
+2. Gövde metni profesyonel Türkçe ile yazılmalı
+3. Nazik ama net bir ton kullan
+4. Gerekirse detayları listele
+5. Açık bir aksiyon/beklenti belirt
+6. Resmi iş emaili formatında ol
+7. İmza kısmı için sadece "Saygılarımızla," yaz
+
+Lütfen şu formatta yanıt ver:
+KONU: [email konusu]
+GÖVDE:
+[email gövdesi]
+
+NOT: Sadece email içeriğini yaz, başka açıklama ekleme."""
+
+    try:
+        # Configure Gemini API key before use
+        if not GEMINI_API_KEY or GEMINI_API_KEY.strip() == "":
+            return {
+                "success": False,
+                "error": "GEMINI_API_KEY yapılandırılmamış. Lütfen API anahtarınızı program başındaki GEMINI_API_KEY değişkenine ekleyin."
+            }
+        
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        # Call Gemini API
+        model = genai.GenerativeModel('models/gemini-2.0-flash')
+        response = model.generate_content(prompt, request_options={"timeout": 60})
+        
+        if response and response.text:
+            email_text = response.text.strip()
+            
+            # Parse response
+            subject = ""
+            body = ""
+            
+            if "KONU:" in email_text:
+                parts = email_text.split("GÖVDE:", 1)
+                subject_part = parts[0].replace("KONU:", "").strip()
+                subject = subject_part
+                if len(parts) > 1:
+                    body = parts[1].strip()
+            else:
+                # Fallback: use first line as subject
+                lines = email_text.split("\n")
+                subject = lines[0][:100]
+                body = "\n".join(lines[1:])
+            
+            # Determine priority
+            priority = "Normal"
+            if scenario in ["delay", "quality", "warning"]:
+                priority = "Yüksek"
+            elif scenario in ["price", "document"]:
+                priority = "Orta"
+            
+            return {
+                "success": True,
+                "subject": subject,
+                "body": body,
+                "to": supplier_email,
+                "supplier_name": supplier_name,
+                "scenario": scenario,
+                "priority": priority
+            }
+        else:
+            return {
+                "success": False,
+                "error": "AI yanıt oluşturamadı"
+            }
+    
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Email oluşturma hatası: {str(e)}"
+        }
+
+def init_email_automation_tab():
+    """Akıllı Email Otomasyonu - AI ile otomatik email oluşturma"""
+    global email_scenario_var, email_supplier_var, email_context_frame
+    global email_preview_text, email_subject_entry, email_to_entry
+    
+    for widget in frame_email_automation.winfo_children():
+        widget.destroy()
+    
+    # Main container with scrollbar
+    main_canvas = tk.Canvas(frame_email_automation, bg="#f0f0f0", highlightthickness=0)
+    scrollbar = ttk.Scrollbar(frame_email_automation, orient="vertical", command=main_canvas.yview)
+    scrollable_frame = ttk.Frame(main_canvas)
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+    )
+    
+    main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    main_canvas.configure(yscrollcommand=scrollbar.set)
+    
+    # Title Section
+    title_frame = tk.Frame(scrollable_frame, bg="#2c3e50", height=80)
+    title_frame.pack(fill="x", padx=0, pady=0)
+    title_frame.pack_propagate(False)
+    
+    title_label = tk.Label(
+        title_frame,
+        text="📧 Akıllı Email Otomasyonu",
+        font=("Segoe UI", 20, "bold"),
+        bg="#2c3e50",
+        fg="white"
+    )
+    title_label.pack(pady=15)
+    
+    subtitle_label = tk.Label(
+        title_frame,
+        text="AI ile profesyonel tedarikçi emaillerini otomatik oluştur",
+        font=("Segoe UI", 11),
+        bg="#2c3e50",
+        fg="#ecf0f1"
+    )
+    subtitle_label.pack()
+    
+    # Content container
+    content_frame = tk.Frame(scrollable_frame, bg="#f0f0f0")
+    content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    
+    # Left panel - Email Generation
+    left_panel = tk.LabelFrame(
+        content_frame,
+        text="Email Oluştur",
+        font=("Segoe UI", 12, "bold"),
+        bg="white",
+        relief="raised",
+        bd=2
+    )
+    left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+    
+    # Scenario selection
+    tk.Label(left_panel, text="Email Senaryosu:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
+    
+    email_scenario_var = tk.StringVar(value="delay")
+    scenarios = [
+        ("Teslimat Gecikmesi", "delay"),
+        ("Kalite Sorunu", "quality"),
+        ("Fiyat Görüşmesi", "price"),
+        ("Toplantı Daveti", "meeting"),
+        ("Eksik Evrak Hatırlatma", "document"),
+        ("Performans Değerlendirmesi", "review"),
+        ("Teşekkür / Takdir", "thanks"),
+        ("Uyarı / Escalation", "warning")
+    ]
+    
+    scenario_frame = tk.Frame(left_panel, bg="white")
+    scenario_frame.pack(fill="x", padx=15, pady=5)
+    
+    for i, (label, value) in enumerate(scenarios):
+        row = i // 2
+        col = i % 2
+        rb = tk.Radiobutton(
+            scenario_frame,
+            text=label,
+            variable=email_scenario_var,
+            value=value,
+            font=("Segoe UI", 9),
+            bg="white",
+            activebackground="white"
+        )
+        rb.grid(row=row, column=col, sticky="w", padx=5, pady=2)
+    
+    # Supplier selection
+    tk.Label(left_panel, text="Tedarikçi:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
+    
+    supplier_frame = tk.Frame(left_panel, bg="white")
+    supplier_frame.pack(fill="x", padx=15, pady=5)
+    
+    email_supplier_var = tk.StringVar()
+    supplier_combo = ttk.Combobox(supplier_frame, textvariable=email_supplier_var, state="readonly", font=("Segoe UI", 10))
+    supplier_combo.pack(side="left", fill="x", expand=True)
+    
+    def refresh_suppliers():
+        """Refresh supplier list from available data sources"""
+        suppliers = []
+        
+        # Try sonuc_global first (main analysis results)
+        if sonuc_global is not None and not sonuc_global.empty:
+            if tedarikci_col_global and tedarikci_col_global in sonuc_global.columns:
+                suppliers = sorted(sonuc_global[tedarikci_col_global].unique().tolist())
+        
+        # Fallback to detay_sonuc_global
+        if not suppliers and detay_sonuc_global is not None and not detay_sonuc_global.empty:
+            if tedarikci_col_global and tedarikci_col_global in detay_sonuc_global.columns:
+                suppliers = sorted(detay_sonuc_global[tedarikci_col_global].unique().tolist())
+        
+        # Fallback to df_global (raw data)
+        if not suppliers and df_global is not None and not df_global.empty:
+            if tedarikci_col_global and tedarikci_col_global in df_global.columns:
+                suppliers = sorted(df_global[tedarikci_col_global].unique().tolist())
+        
+        # Update combobox
+        if suppliers:
+            supplier_combo['values'] = suppliers
+            supplier_combo.current(0)
+            return len(suppliers)
+        else:
+            supplier_combo['values'] = ["Tedarikçi bulunamadı - Lütfen önce analiz yapın"]
+            return 0
+    
+    # Refresh button
+    refresh_btn = tk.Button(
+        supplier_frame,
+        text="🔄",
+        font=("Segoe UI", 10),
+        bg="#3498db",
+        fg="white",
+        cursor="hand2",
+        command=lambda: messagebox.showinfo("Tedarikçi Listesi", f"{refresh_suppliers()} tedarikçi yüklendi."),
+        width=3
+    )
+    refresh_btn.pack(side="right", padx=(5, 0))
+    
+    # Initial load
+    refresh_suppliers()
+    
+    # Context fields (dynamic based on scenario)
+    tk.Label(left_panel, text="Detaylar:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
+    
+    email_context_frame = tk.Frame(left_panel, bg="white")
+    email_context_frame.pack(fill="both", expand=True, padx=15, pady=5)
+    
+    # Default context fields
+    tk.Label(email_context_frame, text="Ek Notlar (opsiyonel):", font=("Segoe UI", 9), bg="white").grid(row=0, column=0, sticky="w", pady=5)
+    context_notes = tk.Text(email_context_frame, height=3, font=("Segoe UI", 9), wrap="word")
+    context_notes.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+    email_context_frame.grid_columnconfigure(0, weight=1)
+    
+    # Generate button
+    generate_btn = tk.Button(
+        left_panel,
+        text="🤖 Email Oluştur",
+        font=("Segoe UI", 11, "bold"),
+        bg="#27ae60",
+        fg="white",
+        activebackground="#229954",
+        activeforeground="white",
+        cursor="hand2",
+        relief="raised",
+        bd=3,
+        command=lambda: generate_email_content()
+    )
+    generate_btn.pack(fill="x", padx=15, pady=15)
+    
+    # Right panel - Email Preview
+    right_panel = tk.LabelFrame(
+        content_frame,
+        text="Email Önizleme ve Gönderim",
+        font=("Segoe UI", 12, "bold"),
+        bg="white",
+        relief="raised",
+        bd=2
+    )
+    right_panel.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+    
+    # Email fields
+    tk.Label(right_panel, text="Kime:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 2))
+    email_to_entry = tk.Entry(right_panel, font=("Segoe UI", 10))
+    email_to_entry.pack(fill="x", padx=15, pady=(0, 10))
+    
+    tk.Label(right_panel, text="Konu:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=15, pady=(5, 2))
+    email_subject_entry = tk.Entry(right_panel, font=("Segoe UI", 10))
+    email_subject_entry.pack(fill="x", padx=15, pady=(0, 10))
+    
+    tk.Label(right_panel, text="Email İçeriği:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=15, pady=(5, 2))
+    
+    email_preview_text = tk.Text(
+        right_panel,
+        wrap="word",
+        font=("Segoe UI", 10),
+        height=20,
+        relief="sunken",
+        bd=2
+    )
+    email_preview_text.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+    
+    # Action buttons
+    button_frame = tk.Frame(right_panel, bg="white")
+    button_frame.pack(fill="x", padx=15, pady=10)
+    
+    send_btn = tk.Button(
+        button_frame,
+        text="📧 Email Gönder",
+        font=("Segoe UI", 10, "bold"),
+        bg="#3498db",
+        fg="white",
+        activebackground="#2980b9",
+        activeforeground="white",
+        cursor="hand2",
+        command=lambda: send_generated_email()
+    )
+    send_btn.pack(side="left", expand=True, fill="x", padx=(0, 5))
+    
+    save_draft_btn = tk.Button(
+        button_frame,
+        text="💾 Taslak Kaydet",
+        font=("Segoe UI", 10),
+        bg="#95a5a6",
+        fg="white",
+        activebackground="#7f8c8d",
+        activeforeground="white",
+        cursor="hand2",
+        command=lambda: save_email_draft()
+    )
+    save_draft_btn.pack(side="left", expand=True, fill="x", padx=5)
+    
+    clear_btn = tk.Button(
+        button_frame,
+        text="🔄 Temizle",
+        font=("Segoe UI", 10),
+        bg="#e74c3c",
+        fg="white",
+        activebackground="#c0392b",
+        activeforeground="white",
+        cursor="hand2",
+        command=lambda: clear_email_form()
+    )
+    clear_btn.pack(side="left", expand=True, fill="x", padx=(5, 0))
+    
+    # Configure grid weights
+    content_frame.grid_rowconfigure(0, weight=1)
+    content_frame.grid_columnconfigure(0, weight=1)
+    content_frame.grid_columnconfigure(1, weight=2)
+    
+    # Pack canvas and scrollbar
+    main_canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
+    # Helper functions
+    def generate_email_content():
+        """Generate email using AI"""
+        scenario = email_scenario_var.get()
+        supplier = email_supplier_var.get()
+        
+        if not supplier or supplier == "Tedarikçi bulunamadı":
+            messagebox.showwarning("Uyarı", "Lütfen bir tedarikçi seçin!")
+            return
+        
+        # Get supplier email (mock for now, should be from database)
+        supplier_email = f"{supplier.lower().replace(' ', '.')}@example.com"
+        
+        # Gather context data
+        context_data = {
+            "scenario": scenario
+        }
+        
+        # Add scenario-specific mock data
+        if scenario == "delay":
+            context_data["days_late"] = "3"
+            context_data["order_no"] = "DF-2024-12345"
+            context_data["planned_date"] = "15.02.2024"
+        elif scenario == "quality":
+            context_data["return_rate"] = "7.5"
+            context_data["issue_description"] = "Kumaş kalitesi standardın altında"
+        elif scenario == "price":
+            context_data["price_increase"] = "12"
+            context_data["product"] = "Pamuklu T-Shirt"
+        elif scenario == "meeting":
+            context_data["meeting_purpose"] = "Performans değerlendirmesi ve gelecek dönem planlaması"
+            context_data["suggested_date"] = "20.02.2024 - 14:00"
+        elif scenario == "document":
+            context_data["missing_docs"] = "ISO 9001 Belgesi, Çevre İzin Belgesi"
+            context_data["deadline"] = "28.02.2024"
+        elif scenario == "review":
+            context_data["performance_score"] = "85"
+            context_data["period"] = "Ocak 2024"
+        
+        # Show loading message
+        email_preview_text.delete("1.0", "end")
+        email_preview_text.insert("1.0", "🤖 AI email oluşturuyor...\n\nLütfen bekleyin...")
+        email_preview_text.update()
+        
+        # Generate email in background
+        def generate_in_thread():
+            result = generate_ai_email(scenario, supplier, supplier_email, context_data)
+            
+            def update_ui():
+                if result.get("success"):
+                    email_to_entry.delete(0, "end")
+                    email_to_entry.insert(0, result["to"])
+                    
+                    email_subject_entry.delete(0, "end")
+                    email_subject_entry.insert(0, result["subject"])
+                    
+                    email_preview_text.delete("1.0", "end")
+                    email_preview_text.insert("1.0", result["body"])
+                    
+                    messagebox.showinfo("Başarılı", "Email başarıyla oluşturuldu!\n\nİstediğiniz değişiklikleri yapabilir ve gönderebilirsiniz.")
+                else:
+                    email_preview_text.delete("1.0", "end")
+                    email_preview_text.insert("1.0", f"❌ Hata: {result.get('error', 'Bilinmeyen hata')}")
+                    messagebox.showerror("Hata", f"Email oluşturulamadı:\n{result.get('error', 'Bilinmeyen hata')}")
+            
+            email_preview_text.after(0, update_ui)
+        
+        threading.Thread(target=generate_in_thread, daemon=True).start()
+    
+    def send_generated_email():
+        """Send the generated email"""
+        to_email = email_to_entry.get().strip()
+        subject = email_subject_entry.get().strip()
+        body = email_preview_text.get("1.0", "end").strip()
+        
+        if not to_email or not subject or not body:
+            messagebox.showwarning("Uyarı", "Lütfen tüm alanları doldurun!")
+            return
+        
+        # Confirm before sending
+        if not messagebox.askyesno("Onayla", f"Email gönderilsin mi?\n\nKime: {to_email}\nKonu: {subject}"):
+            return
+        
+        try:
+            # Use existing email sending functionality
+            # Note: This assumes GMAIL credentials are configured
+            if GMAIL_USER and GMAIL_APP_PASSWORD:
+                msg = MIMEMultipart()
+                msg['From'] = GMAIL_USER
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                msg.attach(MIMEText(body, 'plain', 'utf-8'))
+                
+                server = smtplib.SMTP('smtp.gmail.com', 587)
+                server.starttls()
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.sendmail(GMAIL_USER, to_email, msg.as_string())
+                server.quit()
+                
+                # Log activity
+                if activity_logger:
+                    activity_logger.log_event(
+                        "EMAIL_SENT",
+                        "Email Automation",
+                        f"Email sent to {to_email}: {subject}"
+                    )
+                
+                messagebox.showinfo("Başarılı", f"Email başarıyla gönderildi!\n\nKime: {to_email}")
+                clear_email_form()
+            else:
+                messagebox.showwarning("Uyarı", "Email gönderimi için GMAIL ayarları yapılmamış!\n\nEmail içeriği panoya kopyalandı.")
+                root.clipboard_clear()
+                root.clipboard_append(f"To: {to_email}\nSubject: {subject}\n\n{body}")
+        
+        except Exception as e:
+            messagebox.showerror("Hata", f"Email gönderilemedi:\n{str(e)}")
+    
+    def save_email_draft():
+        """Save email as draft to file"""
+        to_email = email_to_entry.get().strip()
+        subject = email_subject_entry.get().strip()
+        body = email_preview_text.get("1.0", "end").strip()
+        
+        if not subject or not body:
+            messagebox.showwarning("Uyarı", "Email içeriği boş!")
+            return
+        
+        try:
+            from tkinter import filedialog
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                initialfile=f"Email_Taslak_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            )
+            
+            if filename:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(f"Kime: {to_email}\n")
+                    f.write(f"Konu: {subject}\n")
+                    f.write(f"\n{body}")
+                
+                messagebox.showinfo("Başarılı", f"Email taslağı kaydedildi:\n{filename}")
+        
+        except Exception as e:
+            messagebox.showerror("Hata", f"Taslak kaydedilemedi:\n{str(e)}")
+    
+    def clear_email_form():
+        """Clear all email fields"""
+        email_to_entry.delete(0, "end")
+        email_subject_entry.delete(0, "end")
+        email_preview_text.delete("1.0", "end")
+
+# ========== EMAIL GELEN KUTUSU (EMAIL INBOX MANAGEMENT) ==========
+
+def init_email_inbox_tab():
+    """Email Gelen Kutusu - View and reply to emails without opening email client"""
+    global email_list_tree, email_viewer_text, selected_email_id
+    
+    # Initialize database
+    init_email_database()
+    
+    for widget in frame_email_inbox.winfo_children():
+        widget.destroy()
+    
+    # Title
+    title_label = tk.Label(
+        frame_email_inbox,
+        text="📥 Email Gelen Kutusu",
+        font=("Segoe UI", 20, "bold"),
+        bg="#f0f0f0"
+    )
+    title_label.pack(pady=(0, 5))
+    
+    subtitle_label = tk.Label(
+        frame_email_inbox,
+        text="Email istemcisini açmadan emaillerinizi görüntüleyin ve yanıtlayın",
+        font=("Segoe UI", 10),
+        bg="#f0f0f0",
+        fg="#666666"
+    )
+    subtitle_label.pack(pady=(0, 10))
+    
+    # Toolbar
+    toolbar_frame = tk.Frame(frame_email_inbox, bg="#f0f0f0")
+    toolbar_frame.pack(fill="x", pady=(0, 10))
+    
+    def refresh_emails():
+        """Fetch new emails from IMAP and refresh list"""
+        try:
+            refresh_btn.config(state="disabled", text="🔄 Yükleniyor...")
+            frame_email_inbox.update()
+            
+            emails, error = fetch_emails_from_imap(limit=50)
+            if error:
+                messagebox.showerror("Hata", f"Email çekme hatası:\n{error}")
+                refresh_btn.config(state="normal", text="🔄 Yenile")
+                return
+            
+            # Save to database (INSERT OR REPLACE handles both new and updated emails)
+            saved_count = 0
+            for email_data in emails:
+                if save_email_to_db(email_data):
+                    saved_count += 1
+            
+            # Refresh list
+            load_email_list()
+            
+            messagebox.showinfo("Başarılı", f"{len(emails)} email çekildi, {saved_count} email güncellendi!")
+            refresh_btn.config(state="normal", text="🔄 Yenile")
+            
+        except Exception as e:
+            messagebox.showerror("Hata", f"Email yenileme hatası:\n{str(e)}")
+            refresh_btn.config(state="normal", text="🔄 Yenile")
+    
+    refresh_btn = tk.Button(
+        toolbar_frame,
+        text="🔄 Yenile",
+        font=("Segoe UI", 10),
+        bg="#3498db",
+        fg="white",
+        cursor="hand2",
+        command=refresh_emails,
+        padx=15,
+        pady=5
+    )
+    refresh_btn.pack(side="left", padx=5)
+    
+    unread_only_var = tk.IntVar(value=0)
+    unread_check = tk.Checkbutton(
+        toolbar_frame,
+        text="Sadece Okunmamış",
+        variable=unread_only_var,
+        bg="#f0f0f0",
+        font=("Segoe UI", 10),
+        command=lambda: load_email_list()
+    )
+    unread_check.pack(side="left", padx=10)
+    
+    # Main content - split into two panels
+    content_frame = tk.Frame(frame_email_inbox, bg="#f0f0f0")
+    content_frame.pack(fill="both", expand=True)
+    
+    # Left panel - Email list
+    left_panel = tk.Frame(content_frame, bg="white", relief="solid", borderwidth=1)
+    left_panel.pack(side="left", fill="both", expand=False, padx=(0, 5))
+    left_panel.config(width=400)
+    
+    list_label = tk.Label(
+        left_panel,
+        text="📧 Email Listesi",
+        font=("Segoe UI", 12, "bold"),
+        bg="white"
+    )
+    list_label.pack(pady=10)
+    
+    # Email list with Treeview
+    list_frame = tk.Frame(left_panel)
+    list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    list_scroll = tk.Scrollbar(list_frame)
+    list_scroll.pack(side="right", fill="y")
+    
+    email_list_tree = ttk.Treeview(
+        list_frame,
+        columns=("from", "subject", "date"),
+        show="tree headings",
+        yscrollcommand=list_scroll.set,
+        selectmode="browse"
+    )
+    list_scroll.config(command=email_list_tree.yview)
+    
+    email_list_tree.heading("#0", text="")
+    email_list_tree.heading("from", text="Kimden")
+    email_list_tree.heading("subject", text="Konu")
+    email_list_tree.heading("date", text="Tarih")
+    
+    email_list_tree.column("#0", width=30)
+    email_list_tree.column("from", width=150)
+    email_list_tree.column("subject", width=200)
+    email_list_tree.column("date", width=100)
+    
+    email_list_tree.pack(fill="both", expand=True)
+    
+    # Right panel - Email viewer
+    right_panel = tk.Frame(content_frame, bg="white", relief="solid", borderwidth=1)
+    right_panel.pack(side="right", fill="both", expand=True)
+    
+    viewer_label = tk.Label(
+        right_panel,
+        text="📖 Email Görüntüleyici",
+        font=("Segoe UI", 12, "bold"),
+        bg="white"
+    )
+    viewer_label.pack(pady=10)
+    
+    # Email header frame
+    header_frame = tk.Frame(right_panel, bg="white")
+    header_frame.pack(fill="x", padx=10, pady=(0, 10))
+    
+    email_from_label = tk.Label(
+        header_frame,
+        text="Kimden: ",
+        font=("Segoe UI", 10),
+        bg="white",
+        anchor="w"
+    )
+    email_from_label.pack(fill="x")
+    
+    email_subject_label = tk.Label(
+        header_frame,
+        text="Konu: ",
+        font=("Segoe UI", 10, "bold"),
+        bg="white",
+        anchor="w"
+    )
+    email_subject_label.pack(fill="x", pady=(5, 0))
+    
+    email_date_label = tk.Label(
+        header_frame,
+        text="Tarih: ",
+        font=("Segoe UI", 9),
+        bg="white",
+        fg="#666",
+        anchor="w"
+    )
+    email_date_label.pack(fill="x", pady=(2, 0))
+    
+    # Separator
+    separator = tk.Frame(header_frame, bg="#cccccc", height=1)
+    separator.pack(fill="x", pady=10)
+    
+    # Email body viewer
+    viewer_frame = tk.Frame(right_panel)
+    viewer_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    viewer_scroll = tk.Scrollbar(viewer_frame)
+    viewer_scroll.pack(side="right", fill="y")
+    
+    email_viewer_text = tk.Text(
+        viewer_frame,
+        wrap="word",
+        font=("Segoe UI", 10),
+        yscrollcommand=viewer_scroll.set,
+        bg="#f9f9f9",
+        padx=10,
+        pady=10
+    )
+    viewer_scroll.config(command=email_viewer_text.yview)
+    email_viewer_text.pack(fill="both", expand=True)
+    
+    # Action buttons
+    button_frame = tk.Frame(right_panel, bg="white")
+    button_frame.pack(fill="x", padx=10, pady=(0, 10))
+    
+    def reply_to_email():
+        """Open reply dialog"""
+        if not hasattr(init_email_inbox_tab, 'selected_email_id') or not init_email_inbox_tab.selected_email_id:
+            messagebox.showwarning("Uyarı", "Lütfen önce bir email seçin")
+            return
+        
+        open_reply_dialog(init_email_inbox_tab.selected_email_id)
+    
+    reply_btn = tk.Button(
+        button_frame,
+        text="💬 Cevapla",
+        font=("Segoe UI", 10),
+        bg="#27ae60",
+        fg="white",
+        cursor="hand2",
+        command=reply_to_email,
+        padx=20,
+        pady=8
+    )
+    reply_btn.pack(side="left", padx=5)
+    
+    def mark_as_read():
+        """Mark selected email as read"""
+        if hasattr(init_email_inbox_tab, 'selected_email_id') and init_email_inbox_tab.selected_email_id:
+            mark_email_as_read(init_email_inbox_tab.selected_email_id)
+            load_email_list()
+    
+    read_btn = tk.Button(
+        button_frame,
+        text="✓ Okundu",
+        font=("Segoe UI", 10),
+        bg="#95a5a6",
+        fg="white",
+        cursor="hand2",
+        command=mark_as_read,
+        padx=20,
+        pady=8
+    )
+    read_btn.pack(side="left", padx=5)
+    
+    # Email selection handler
+    def on_email_select(event):
+        """Handle email selection"""
+        selection = email_list_tree.selection()
+        if not selection:
+            return
+        
+        # Get email_id from item identifier (iid)
+        email_id = int(selection[0])
+        
+        if not email_id:
+            return
+        
+        # Store selected email ID
+        init_email_inbox_tab.selected_email_id = email_id
+        
+        # Get and display email
+        email_data = get_email_body(email_id)
+        if email_data:
+            email_from_label.config(text=f"Kimden: {email_data['from']}")
+            email_subject_label.config(text=f"Konu: {email_data['subject']}")
+            email_date_label.config(text=f"Tarih: {email_data['date']}")
+            
+            email_viewer_text.config(state="normal")
+            email_viewer_text.delete("1.0", "end")
+            email_viewer_text.insert("1.0", email_data['body'])
+            email_viewer_text.config(state="disabled")
+            
+            # Mark as read and refresh list to update icons/filter
+            mark_email_as_read(email_id)
+            load_email_list()  # Refresh list after marking as read
+    
+    email_list_tree.bind('<<TreeviewSelect>>', on_email_select)
+    
+    def load_email_list():
+        """Load emails from database into tree"""
+        # Clear existing items
+        for item in email_list_tree.get_children():
+            email_list_tree.delete(item)
+        
+        # Get emails
+        unread_only = unread_only_var.get() == 1
+        emails = get_emails_from_db(limit=100, unread_only=unread_only)
+        
+        for email_row in emails:
+            email_id, from_addr, subject, date, read, replied = email_row
+            
+            # Icon based on status
+            icon = "📩" if read == 0 else ("💬" if replied == 1 else "✉️")
+            
+            # Add to tree - use email_id as iid, only display data in values
+            email_list_tree.insert(
+                "",
+                "end",
+                iid=str(email_id),  # Store email_id as item identifier
+                text=icon,
+                values=(from_addr, subject, date[:16] if date else "")  # Only display data
+            )
+    
+    # Initial load
+    load_email_list()
+
+def open_reply_dialog(email_id):
+    """Open dialog to reply to an email"""
+    email_data = get_email_body(email_id)
+    if not email_data:
+        messagebox.showerror("Hata", "Email verisi alınamadı")
+        return
+    
+    # Create reply dialog
+    reply_window = tk.Toplevel()
+    reply_window.title("Email Cevapla")
+    reply_window.geometry("700x600")
+    reply_window.configure(bg="#f0f0f0")
+    
+    # Title
+    title_label = tk.Label(
+        reply_window,
+        text="💬 Email Cevapla",
+        font=("Segoe UI", 16, "bold"),
+        bg="#f0f0f0"
+    )
+    title_label.pack(pady=10)
+    
+    # To field
+    to_frame = tk.Frame(reply_window, bg="#f0f0f0")
+    to_frame.pack(fill="x", padx=20, pady=5)
+    
+    tk.Label(to_frame, text="Kime:", font=("Segoe UI", 10), bg="#f0f0f0", width=10, anchor="w").pack(side="left")
+    to_entry = tk.Entry(to_frame, font=("Segoe UI", 10))
+    to_entry.pack(side="left", fill="x", expand=True)
+    to_entry.insert(0, email_data['from'])
+    
+    # Subject field
+    subject_frame = tk.Frame(reply_window, bg="#f0f0f0")
+    subject_frame.pack(fill="x", padx=20, pady=5)
+    
+    tk.Label(subject_frame, text="Konu:", font=("Segoe UI", 10), bg="#f0f0f0", width=10, anchor="w").pack(side="left")
+    subject_entry = tk.Entry(subject_frame, font=("Segoe UI", 10))
+    subject_entry.pack(side="left", fill="x", expand=True)
+    
+    # Add Re: if not already present
+    original_subject = email_data['subject']
+    if not original_subject.startswith("Re:"):
+        original_subject = f"Re: {original_subject}"
+    subject_entry.insert(0, original_subject)
+    
+    # Quote original checkbox
+    quote_var = tk.IntVar(value=1)
+    quote_check = tk.Checkbutton(
+        reply_window,
+        text="Orijinal mesajı alıntıla",
+        variable=quote_var,
+        bg="#f0f0f0",
+        font=("Segoe UI", 10)
+    )
+    quote_check.pack(pady=5)
+    
+    # Body text area
+    body_frame = tk.Frame(reply_window)
+    body_frame.pack(fill="both", expand=True, padx=20, pady=10)
+    
+    body_scroll = tk.Scrollbar(body_frame)
+    body_scroll.pack(side="right", fill="y")
+    
+    body_text = tk.Text(
+        body_frame,
+        wrap="word",
+        font=("Segoe UI", 10),
+        yscrollcommand=body_scroll.set
+    )
+    body_scroll.config(command=body_text.yview)
+    body_text.pack(fill="both", expand=True)
+    
+    # Pre-fill with quoted text if checked
+    if quote_var.get():
+        quoted = f"\n\n--- Orijinal Mesaj ---\n{email_data['body']}"
+        body_text.insert("end", quoted)
+    
+    # Buttons
+    button_frame = tk.Frame(reply_window, bg="#f0f0f0")
+    button_frame.pack(fill="x", padx=20, pady=10)
+    
+    def generate_ai_reply():
+        """Use AI to generate reply content"""
+        try:
+            # Prepare context from original email
+            context = {
+                "original_subject": email_data['subject'],
+                "original_body": email_data['body'][:500] if len(email_data['body']) > 500 else email_data['body'],
+                "from_email": email_data['from']
+            }
+            
+            # Show processing message
+            messagebox.showinfo("Lütfen Bekleyin", "AI cevap hazırlanıyor...")
+            
+            # Generate AI reply
+            result = generate_ai_email(
+                scenario="Cevap",
+                supplier_name=email_data['from'],
+                supplier_email=email_data.get('from', ''),
+                context_data={
+                    "original_subject": email_data['subject'],
+                    "original_body": email_data['body'][:300]
+                }
+            )
+            
+            if result.get('success'):
+                # Clear and insert AI-generated content
+                body_text.delete("1.0", "end")
+                body_text.insert("1.0", result.get('body', ''))
+                messagebox.showinfo("Başarılı", "AI ile cevap hazırlandı! İstediğiniz değişiklikleri yapabilirsiniz.")
+            else:
+                messagebox.showerror("Hata", result.get('error', 'AI cevap oluşturulamadı'))
+                
+        except Exception as e:
+            messagebox.showerror("Hata", f"AI hatası:\n{str(e)}")
+    
+    def send_reply():
+        """Send the reply email"""
+        to_addr = to_entry.get().strip()
+        subject = subject_entry.get().strip()
+        body = body_text.get("1.0", "end").strip()
+        
+        if not to_addr or not subject or not body:
+            messagebox.showwarning("Uyarı", "Lütfen tüm alanları doldurun")
+            return
+        
+        try:
+            # Send email using existing function with correct name
+            success, message = send_email_with_attachments(to_addr, subject, body, [])
+            
+            if success:
+                # Mark original as replied
+                mark_email_as_replied(email_id)
+                messagebox.showinfo("Başarılı", "Email başarıyla gönderildi!")
+                reply_window.destroy()
+            else:
+                messagebox.showerror("Hata", message)
+                
+        except Exception as e:
+            messagebox.showerror("Hata", f"Email gönderme hatası:\n{str(e)}")
+    
+    # AI Generation Button
+    ai_btn = tk.Button(
+        button_frame,
+        text="🤖 AI ile Hazırla",
+        font=("Segoe UI", 10, "bold"),
+        bg="#9b59b6",
+        fg="white",
+        cursor="hand2",
+        command=generate_ai_reply,
+        padx=20,
+        pady=10
+    )
+    ai_btn.pack(side="left", padx=5)
+    
+    send_btn = tk.Button(
+        button_frame,
+        text="📧 Gönder",
+        font=("Segoe UI", 10, "bold"),
+        bg="#3498db",
+        fg="white",
+        cursor="hand2",
+        command=send_reply,
+        padx=30,
+        pady=10
+    )
+    send_btn.pack(side="left", padx=5)
+    
+    cancel_btn = tk.Button(
+        button_frame,
+        text="❌ İptal",
+        font=("Segoe UI", 10),
+        bg="#95a5a6",
+        fg="white",
+        cursor="hand2",
+        command=reply_window.destroy,
+        padx=30,
+        pady=10
+    )
+    cancel_btn.pack(side="left", padx=5)
+
+# ========== END OF EMAIL GELEN KUTUSU ==========
+
+# ========== DOĞAL DİL SORGU MOTORU (NATURAL LANGUAGE QUERY ENGINE) ==========
+
+def init_natural_language_query_tab():
+    """Doğal Dil Sorgu Motoru - Kullanıcılar Türkçe soru sorarak veri sorgulayabilir"""
+    global nlq_history_text, nlq_query_entry
+    
+    for widget in frame_nlq.winfo_children():
+        widget.destroy()
+    
+    # Başlık
+    title_frame = tk.Frame(frame_nlq, bg="#3498db", height=60)
+    title_frame.pack(fill="x", side="top")
+    title_frame.pack_propagate(False)
+    
+    tk.Label(title_frame, text="🗣️ Doğal Dil Sorgu Motoru", 
+             font=("Segoe UI", 18, "bold"), 
+             fg="white", bg="#3498db").pack(pady=15)
+    
+    # Alt başlık
+    subtitle_frame = tk.Frame(frame_nlq, bg="#ecf0f1")
+    subtitle_frame.pack(fill="x")
+    tk.Label(subtitle_frame, 
+             text="Verileriniz hakkında Türkçe sorular sorun, yapay zeka anında cevaplasın!",
+             font=("Segoe UI", 11), fg="#34495e", bg="#ecf0f1").pack(pady=10)
+    
+    # Ana içerik
+    main_container = tk.Frame(frame_nlq, bg="white")
+    main_container.pack(fill="both", expand=True, padx=15, pady=10)
+    
+    # Sol panel - Sorgu geçmişi ve sonuçlar
+    left_panel = tk.Frame(main_container, bg="white")
+    left_panel.pack(side="left", fill="both", expand=True, padx=(0, 5))
+    
+    history_label = tk.Label(left_panel, text="📊 Sorgu Sonuçları", 
+                            font=("Segoe UI", 13, "bold"), 
+                            fg="#2c3e50", bg="white", anchor="w")
+    history_label.pack(fill="x", pady=(5, 10))
+    
+    # Sonuç gösterim alanı
+    history_frame = tk.Frame(left_panel, bg="white")
+    history_frame.pack(fill="both", expand=True)
+    
+    scrollbar = tk.Scrollbar(history_frame)
+    scrollbar.pack(side="right", fill="y")
+    
+    nlq_history_text = tk.Text(history_frame, 
+                               wrap="word", 
+                               font=("Segoe UI", 10), 
+                               bg="#f8f9fa", 
+                               fg="#2c3e50",
+                               bd=1, 
+                               relief="solid",
+                               yscrollcommand=scrollbar.set,
+                               padx=15,
+                               pady=15)
+    nlq_history_text.pack(side="left", fill="both", expand=True)
+    scrollbar.configure(command=nlq_history_text.yview)
+    
+    # Text tag konfigürasyonu
+    nlq_history_text.tag_configure("question", foreground="#3498db", font=("Segoe UI", 11, "bold"))
+    nlq_history_text.tag_configure("answer", foreground="#2c3e50", font=("Segoe UI", 10))
+    nlq_history_text.tag_configure("error", foreground="#e74c3c", font=("Segoe UI", 10, "italic"))
+    nlq_history_text.tag_configure("data", foreground="#16a085", font=("Courier New", 9))
+    nlq_history_text.tag_configure("timestamp", foreground="#95a5a6", font=("Segoe UI", 8))
+    
+    # Hoş geldin mesajı
+    nlq_history_text.insert("1.0", "🎉 Doğal Dil Sorgu Motoruna Hoş Geldiniz!\n\n", "question")
+    nlq_history_text.insert("end", "Verileriniz hakkında Türkçe sorular sorabilirsiniz. AI, sorunuzu anlayıp gerekli analizleri yaparak cevaplar.\n\n")
+    nlq_history_text.insert("end", "💡 Örnek Sorular:\n", "question")
+    nlq_history_text.insert("end", "• En iyi 5 tedarikçiyi göster\n")
+    nlq_history_text.insert("end", "• Geçen ay en çok gecikme yapan tedarikçiler?\n")
+    nlq_history_text.insert("end", "• Kalite skoru 80'in üzerinde olan tedarikçiler\n")
+    nlq_history_text.insert("end", "• Bu yıl fiyatı %10'dan fazla artan ürünler\n")
+    nlq_history_text.insert("end", "• Teslim performansı düşük tedarikçileri listele\n\n")
+    nlq_history_text.insert("end", "Bir soru yazın ve Enter'a basın! 🚀\n")
+    nlq_history_text.configure(state="disabled")
+    
+    # Sağ panel - Örnek sorular ve yardım
+    right_panel = tk.Frame(main_container, bg="white", width=300)
+    right_panel.pack(side="right", fill="y", padx=(5, 0))
+    right_panel.pack_propagate(False)
+    
+    # Örnek sorular bölümü
+    examples_label = tk.Label(right_panel, text="💡 Örnek Sorular", 
+                             font=("Segoe UI", 12, "bold"), 
+                             fg="#2c3e50", bg="white")
+    examples_label.pack(pady=(5, 10))
+    
+    example_questions = [
+        "En iyi 5 tedarikçi",
+        "Kalite skoru en yüksek 10 tedarikçi",
+        "Teslimat performansı %90'ın üzerinde olanlar",
+        "Geçen ay reklamasyonu olan tedarikçiler",
+        "Ortalama fiyatı 100'den fazla olan ürünler",
+        "Stok grubu T-shirt olan ürünler",
+        "İade oranı %5'ten fazla olanlar",
+        "Bu yıl puanı düşen tedarikçiler",
+    ]
+    
+    for question in example_questions:
+        btn = tk.Button(right_panel, 
+                       text=f"📌 {question}", 
+                       font=("Segoe UI", 9),
+                       bg="#ecf0f1",
+                       fg="#2c3e50",
+                       relief="flat",
+                       bd=0,
+                       padx=10,
+                       pady=8,
+                       anchor="w",
+                       cursor="hand2",
+                       command=lambda q=question: execute_example_query(q))
+        btn.pack(fill="x", pady=2)
+        
+        # Hover efekti
+        def on_enter(e, b=btn):
+            b.configure(bg="#3498db", fg="white")
+        def on_leave(e, b=btn):
+            b.configure(bg="#ecf0f1", fg="#2c3e50")
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+    
+    # Yardım bölümü
+    help_frame = tk.LabelFrame(right_panel, text="ℹ️ Yardım", 
+                              font=("Segoe UI", 10, "bold"),
+                              bg="white", fg="#34495e",
+                              padx=10, pady=10)
+    help_frame.pack(fill="x", pady=(15, 5))
+    
+    help_text = """AI, sorunuzu analiz eder ve:
+• Hangi veriyi kullanacağını
+• Nasıl filtreleyeceğini
+• Hangi sıralamayı yapacağını
+otomatik olarak belirler.
+
+Doğal Türkçe yazın!"""
+    
+    tk.Label(help_frame, text=help_text, 
+            font=("Segoe UI", 9), 
+            bg="white", fg="#7f8c8d",
+            justify="left").pack(anchor="w")
+    
+    # Temizle butonu
+    clear_btn = tk.Button(right_panel,
+                         text="🗑️ Geçmişi Temizle",
+                         font=("Segoe UI", 9, "bold"),
+                         bg="#e74c3c",
+                         fg="white",
+                         relief="flat",
+                         padx=15,
+                         pady=8,
+                         cursor="hand2",
+                         command=clear_nlq_history)
+    clear_btn.pack(side="bottom", fill="x", pady=5)
+    
+    # Alt panel - Sorgu girişi
+    input_container = tk.Frame(frame_nlq, bg="#34495e", height=80)
+    input_container.pack(fill="x", side="bottom")
+    input_container.pack_propagate(False)
+    
+    input_frame = tk.Frame(input_container, bg="#34495e")
+    input_frame.pack(fill="both", expand=True, padx=20, pady=15)
+    
+    # Sorgu giriş alanı
+    nlq_query_entry = tk.Entry(input_frame, 
+                              font=("Segoe UI", 12),
+                              bg="white",
+                              fg="#2c3e50",
+                              bd=0,
+                              relief="flat")
+    nlq_query_entry.pack(side="left", fill="both", expand=True, ipady=10)
+    nlq_query_entry.insert(0, "Sorunuzu buraya yazın...")
+    nlq_query_entry.bind("<FocusIn>", lambda e: nlq_query_entry.delete(0, "end") if nlq_query_entry.get() == "Sorunuzu buraya yazın..." else None)
+    nlq_query_entry.bind("<Return>", lambda e: process_nlq_query())
+    
+    # Gönder butonu
+    send_btn = tk.Button(input_frame,
+                        text="🔍 Sorgula",
+                        font=("Segoe UI", 11, "bold"),
+                        bg="#3498db",
+                        fg="white",
+                        relief="flat",
+                        bd=0,
+                        padx=25,
+                        pady=10,
+                        cursor="hand2",
+                        command=process_nlq_query)
+    send_btn.pack(side="right", padx=(10, 0))
+    
+    # Log activity
+    if activity_logger:
+        activity_logger.log_activity("Doğal Dil Sorgu Motoru açıldı", "NLQ")
+
+def execute_example_query(question):
+    """Örnek sorguyu çalıştır"""
+    nlq_query_entry.delete(0, "end")
+    nlq_query_entry.insert(0, question)
+    process_nlq_query()
+
+def clear_nlq_history():
+    """Sorgu geçmişini temizle"""
+    nlq_history_text.configure(state="normal")
+    nlq_history_text.delete("1.0", "end")
+    nlq_history_text.insert("1.0", "🗑️ Geçmiş temizlendi. Yeni bir soru sorun!\n\n")
+    nlq_history_text.configure(state="disabled")
+
+def process_nlq_query():
+    """Doğal dil sorgusunu işle ve AI ile analiz et"""
+    global nlq_history_text, nlq_query_entry
+    
+    query = nlq_query_entry.get().strip()
+    if not query or query == "Sorunuzu buraya yazın...":
+        messagebox.showwarning("Uyarı", "Lütfen bir soru yazın!")
+        return
+    
+    # Sorguyu geçmişe ekle
+    nlq_history_text.configure(state="normal")
+    nlq_history_text.insert("end", f"\n{'='*80}\n")
+    nlq_history_text.insert("end", f"❓ Soru: {query}\n", "question")
+    nlq_history_text.insert("end", f"⏰ {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n", "timestamp")
+    nlq_history_text.insert("end", f"{'='*80}\n\n")
+    nlq_history_text.insert("end", "🤖 AI analiz ediyor...\n\n")
+    nlq_history_text.configure(state="disabled")
+    nlq_history_text.see("end")
+    
+    # Entry'yi temizle
+    nlq_query_entry.delete(0, "end")
+    
+    # Log activity
+    if activity_logger:
+        activity_logger.log_activity(f"NLQ Sorgusu: {query}", "NLQ")
+    
+    # Thread'de AI işlemi başlat
+    def fetch_nlq_response():
+        try:
+            response = execute_natural_language_query(query)
+            
+            # GUI'yi güvenli şekilde güncelle
+            try:
+                if nlq_history_text.winfo_exists():
+                    nlq_history_text.after(0, lambda: update_nlq_result(response))
+            except:
+                pass
+        except Exception as e:
+            error_msg = f"❌ Hata: {str(e)}"
+            try:
+                if nlq_history_text.winfo_exists():
+                    nlq_history_text.after(0, lambda: update_nlq_result(error_msg))
+            except:
+                pass
+    
+    threading.Thread(target=fetch_nlq_response, daemon=True).start()
+
+def update_nlq_result(response):
+    """NLQ sonucunu güncelle"""
+    nlq_history_text.configure(state="normal")
+    
+    # "AI analiz ediyor..." mesajını kaldır
+    content = nlq_history_text.get("1.0", "end")
+    if "AI analiz ediyor..." in content:
+        # Son satırı bul ve sil
+        lines = content.split("\n")
+        for i in range(len(lines) - 1, -1, -1):
+            if "AI analiz ediyor..." in lines[i]:
+                # O satırı sil
+                nlq_history_text.delete(f"end-{len(lines)-i}l", f"end-{len(lines)-i-1}l")
+                break
+    
+    nlq_history_text.insert("end", f"💡 Yanıt:\n", "question")
+    nlq_history_text.insert("end", f"{response}\n\n", "answer")
+    nlq_history_text.configure(state="disabled")
+    nlq_history_text.see("end")
+
+def execute_natural_language_query(query):
+    """Türkçe sorguyu AI ile işle ve veri üzerinde çalıştır"""
+    
+    if not GEMINI_API_KEY:
+        return "❌ Gemini API anahtarı tanımlı değil. Lütfen GEMINI_API_KEY değişkenini güncelleyin."
+    
+    # Mevcut veri durumunu kontrol et
+    data_available = []
+    if 'tedarik_df' in globals() and tedarik_df is not None and not tedarik_df.empty:
+        data_available.append(f"Tedarik verisi ({len(tedarik_df)} satır)")
+    if 'reklamasyon_df' in globals() and reklamasyon_df is not None and not reklamasyon_df.empty:
+        data_available.append(f"Reklamasyon verisi ({len(reklamasyon_df)} satır)")
+    if 'detay_sonuc_global' in globals() and detay_sonuc_global is not None and not detay_sonuc_global.empty:
+        data_available.append(f"Analiz sonuçları ({len(detay_sonuc_global)} satır)")
+    if 'df_global' in globals() and df_global is not None and not df_global.empty:
+        data_available.append(f"Ana veri ({len(df_global)} satır)")
+    
+    if not data_available:
+        return "⚠️ Henüz veri yüklenmemiş. Lütfen önce veri yükleyin ve analiz edin."
+    
+    # Veri hakkında bilgi topla
+    data_info = "\n".join(data_available)
+    
+    # En uygun veri setini seç ve kolonları al
+    if 'detay_sonuc_global' in globals() and detay_sonuc_global is not None and not detay_sonuc_global.empty:
+        df_to_use = detay_sonuc_global
+        data_type = "Analiz Sonuçları"
+    elif 'df_global' in globals() and df_global is not None and not df_global.empty:
+        df_to_use = df_global
+        data_type = "Ana Veri"
+    elif 'tedarik_df' in globals() and tedarik_df is not None and not tedarik_df.empty:
+        df_to_use = tedarik_df
+        data_type = "Tedarik Verisi"
+    else:
+        return "⚠️ Kullanılabilir veri bulunamadı."
+    
+    # Veri özetini hazırla
+    columns_info = ", ".join(df_to_use.columns.tolist()[:20])  # İlk 20 kolon
+    if len(df_to_use.columns) > 20:
+        columns_info += f" ... (ve {len(df_to_use.columns) - 20} kolon daha)"
+    
+    # İstatistikleri hazırla
+    sample_data = df_to_use.head(3).to_string()
+    
+    # AI'ya gönderilecek prompt
+    prompt = f"""Sen bir veri analiz asistanısın. Kullanıcı Türkçe bir soru sordu. Bu soruyu analiz et ve veri üzerinde nasıl işlem yapılacağını açıkla.
+
+Kullanıcı Sorusu: "{query}"
+
+Mevcut Veri: {data_type}
+Satır Sayısı: {len(df_to_use)}
+Kolonlar: {columns_info}
+
+Örnek Veri (İlk 3 satır):
+{sample_data}
+
+Görevi:
+1. Kullanıcının sorusunu anla
+2. Hangi kolonları kullanacağını belirle
+3. Nasıl filtreleme/sıralama yapılacağını açıkla
+4. Kullanıcıya sonucu Türkçe ve anlaşılır şekilde sun
+
+ÖNEMLI: Sadece mevcut kolonları kullan. Olmayan kolonlar için varsayım yapma.
+
+Lütfen şu formatta yanıt ver:
+- Sorguyu nasıl anladığını kısaca açıkla
+- Sonuçları listele (varsa ilk 10-15 sonuç)
+- Özet istatistikler ver
+- Kullanıcıya öneriler sun
+
+Yanıtın Türkçe, profesyonel ve anlaşılır olsun."""
+
+    try:
+        # Gemini API'ye istek gönder
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'candidates' in result and len(result['candidates']) > 0:
+                ai_response = result['candidates'][0]['content']['parts'][0]['text']
+                
+                # Python kodu içeriyorsa çalıştır
+                if "```python" in ai_response:
+                    # Kodu çıkar ve çalıştır
+                    try:
+                        code_start = ai_response.find("```python") + 9
+                        code_end = ai_response.find("```", code_start)
+                        code = ai_response[code_start:code_end].strip()
+                        
+                        # Güvenli bir namespace'de çalıştır
+                        local_vars = {
+                            'df': df_to_use,
+                            'pd': pd,
+                            'np': np
+                        }
+                        exec(code, {}, local_vars)
+                        
+                        # Sonucu al
+                        if 'result' in local_vars:
+                            result_str = str(local_vars['result'])
+                            ai_response += f"\n\n📊 Sonuç:\n{result_str}"
+                    except Exception as e:
+                        ai_response += f"\n\n⚠️ Kod çalıştırma hatası: {str(e)}"
+                
+                return ai_response
+            else:
+                return "❌ AI'dan yanıt alınamadı."
+        else:
+            return f"❌ API Hatası: {response.status_code} - {response.text}"
+            
+    except requests.exceptions.Timeout:
+        return "❌ İstek zaman aşımına uğradı. Lütfen tekrar deneyin."
+    except Exception as e:
+        return f"❌ Hata oluştu: {str(e)}"
+
+# ========== END OF NATURAL LANGUAGE QUERY ENGINE ==========
+
+# ========== AUTOMATIC ACTION RECOMMENDATIONS (AKILLI EYLEM ÖNERİLERİ) ==========
+
+def detect_supplier_problems(data_df):
+    """Tedarikçi problemlerini tespit et"""
+    problems = []
+    
+    if data_df is None or data_df.empty:
+        return problems
+    
+    try:
+        # Teslimat performansı kontrolü
+        if tedarikci_col_global in data_df.columns and 'Teslimat' in data_df.columns:
+            for idx, row in data_df.iterrows():
+                teslimat = row.get('Teslimat', 100)
+                if teslimat < 70:
+                    problems.append({
+                        'type': 'delivery',
+                        'supplier': row.get(tedarikci_col_global, 'Bilinmeyen'),
+                        'value': teslimat,
+                        'threshold': 70,
+                        'severity': 'critical' if teslimat < 50 else 'high'
+                    })
+        
+        # Kalite skoru kontrolü
+        if tedarikci_col_global in data_df.columns and 'Kalite' in data_df.columns:
+            for idx, row in data_df.iterrows():
+                kalite = row.get('Kalite', 100)
+                if kalite < 75:
+                    problems.append({
+                        'type': 'quality',
+                        'supplier': row.get(tedarikci_col_global, 'Bilinmeyen'),
+                        'value': kalite,
+                        'threshold': 75,
+                        'severity': 'critical' if kalite < 60 else 'high'
+                    })
+        
+        # İade oranı kontrolü
+        if tedarikci_col_global in data_df.columns and 'İade Oranı' in data_df.columns:
+            for idx, row in data_df.iterrows():
+                iade = row.get('İade Oranı', 0)
+                if iade > 5:
+                    problems.append({
+                        'type': 'return_rate',
+                        'supplier': row.get(tedarikci_col_global, 'Bilinmeyen'),
+                        'value': iade,
+                        'threshold': 5,
+                        'severity': 'critical' if iade > 10 else 'high'
+                    })
+        
+    except Exception as e:
+        print(f"Problem detection error: {str(e)}")
+    
+    return problems
+
+def generate_action_recommendations(problems):
+    """AI ile aksiyon önerileri oluştur"""
+    if not problems:
+        return []
+    
+    recommendations = []
+    
+    try:
+        # Gemini AI ile öneri oluştur
+        if not GENAI_AVAILABLE or not GEMINI_API_KEY:
+            # Fallback: Basit öneriler
+            for problem in problems[:5]:  # İlk 5 problem
+                if problem['type'] == 'delivery':
+                    recommendations.append({
+                        'problem': f"Teslimat performansı düşük: {problem['supplier']}",
+                        'actions': [
+                            "Alternatif tedarikçi araştır",
+                            "Acil toplantı planla",
+                            "Stok güvenlik seviyelerini artır"
+                        ],
+                        'priority': problem['severity'],
+                        'timeline': 'Hemen'
+                    })
+                elif problem['type'] == 'quality':
+                    recommendations.append({
+                        'problem': f"Kalite skoru düşük: {problem['supplier']}",
+                        'actions': [
+                            "Kalite denetimi planla",
+                            "Üretim sürecini incele",
+                            "Detaylı geri bildirim ver"
+                        ],
+                        'priority': problem['severity'],
+                        'timeline': 'Bu hafta'
+                    })
+                elif problem['type'] == 'return_rate':
+                    recommendations.append({
+                        'problem': f"Yüksek iade oranı: {problem['supplier']}",
+                        'actions': [
+                            "Kök neden analizi yap",
+                            "Kalite kontrol sıkılaştır",
+                            "Tedarikçi eğitimi düzenle"
+                        ],
+                        'priority': problem['severity'],
+                        'timeline': 'Bu hafta'
+                    })
+            return recommendations
+        
+        # AI ile öneri oluştur
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('models/gemini-2.0-flash')
+        
+        for problem in problems[:5]:  # İlk 5 problem için öneri
+            prompt = f"""Tedarikçi performans problemi tespit edildi:
+            
+Problem Tipi: {problem['type']}
+Tedarikçi: {problem['supplier']}
+Mevcut Değer: {problem['value']}
+Hedef Değer: {problem['threshold']}
+Önem: {problem['severity']}
+
+Lütfen bu problem için:
+1. 3-5 spesifik, uygulanabilir aksiyon öner
+2. Öncelik seviyesi belirle (critical/high/medium/low)
+3. Zaman çizelgesi öner
+
+JSON formatında yanıt ver:
+{{
+    "actions": ["aksiyon1", "aksiyon2", ...],
+    "priority": "critical/high/medium/low",
+    "timeline": "Hemen/Bu hafta/Bu ay"
+}}
+"""
+            
+            try:
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    # JSON parse et
+                    import re
+                    json_match = re.search(r'\{[^\}]+\}', response.text, re.DOTALL)
+                    if json_match:
+                        ai_data = json.loads(json_match.group())
+                        recommendations.append({
+                            'problem': f"{problem['type']}: {problem['supplier']} ({problem['value']})",
+                            'actions': ai_data.get('actions', []),
+                            'priority': ai_data.get('priority', problem['severity']),
+                            'timeline': ai_data.get('timeline', 'Bu hafta')
+                        })
+                    else:
+                        # Fallback
+                        recommendations.append({
+                            'problem': f"{problem['type']}: {problem['supplier']}",
+                            'actions': response.text.split('\n')[:3],
+                            'priority': problem['severity'],
+                            'timeline': 'Bu hafta'
+                        })
+            except:
+                # Fallback basit öneri
+                pass
+                
+    except Exception as e:
+        print(f"AI recommendation error: {str(e)}")
+    
+    return recommendations
+
+def init_action_recommendations_tab():
+    """Akıllı Eylem Önerileri - AI-powered automatic action recommendations"""
+    global action_recommendations_container
+    
+    for widget in frame_action_recommendations.winfo_children():
+        widget.destroy()
+    
+    # Başlık
+    title_frame = tk.Frame(frame_action_recommendations, bg="#e74c3c", height=60)
+    title_frame.pack(fill="x", side="top")
+    title_frame.pack_propagate(False)
+    
+    tk.Label(title_frame, text="🎯 Akıllı Eylem Önerileri", 
+             font=("Segoe UI", 18, "bold"), 
+             fg="white", bg="#e74c3c").pack(side="left", padx=20, pady=15)
+    
+    # Yenile butonu
+    refresh_btn = tk.Button(title_frame, text="🔄 Yenile", 
+                           font=("Segoe UI", 10, "bold"),
+                           bg="#c0392b", fg="white",
+                           cursor="hand2",
+                           command=lambda: load_action_recommendations())
+    refresh_btn.pack(side="right", padx=20, pady=10)
+    
+    # Alt başlık
+    subtitle_frame = tk.Frame(frame_action_recommendations, bg="#ecf0f1")
+    subtitle_frame.pack(fill="x")
+    tk.Label(subtitle_frame, 
+             text="AI tedarikçi problemlerini tespit eder ve öncelikli aksiyonlar önerir",
+             font=("Segoe UI", 11), fg="#34495e", bg="#ecf0f1").pack(pady=10)
+    
+    # Scrollable ana konteyner
+    main_canvas = tk.Canvas(frame_action_recommendations, bg="white", highlightthickness=0)
+    main_scrollbar = tk.Scrollbar(frame_action_recommendations, orient="vertical", command=main_canvas.yview)
+    action_recommendations_container = tk.Frame(main_canvas, bg="white")
+    
+    main_canvas.configure(yscrollcommand=main_scrollbar.set)
+    main_scrollbar.pack(side="right", fill="y")
+    main_canvas.pack(side="left", fill="both", expand=True)
+    
+    canvas_frame = main_canvas.create_window((0, 0), window=action_recommendations_container, anchor="nw")
+    
+    def configure_scroll_region(event=None):
+        main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+    
+    action_recommendations_container.bind("<Configure>", configure_scroll_region)
+    
+    # Mouse wheel scroll
+    def on_mousewheel(event):
+        main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    main_canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
+    # İlk yükleme
+    load_action_recommendations()
+    
+    # Activity log
+    if 'activity_logger' in globals() and activity_logger is not None:
+        activity_logger.log_activity("Akıllı Eylem Önerileri açıldı", "Actions")
+
+def load_action_recommendations():
+    """Aksiyon önerilerini yükle ve göster"""
+    global action_recommendations_container
+    
+    # Temizle
+    for widget in action_recommendations_container.winfo_children():
+        widget.destroy()
+    
+    # Yükleniyor mesajı
+    loading_label = tk.Label(action_recommendations_container, 
+                            text="🔄 Problemler tespit ediliyor ve öneriler oluşturuluyor...",
+                            font=("Segoe UI", 12), fg="#7f8c8d", bg="white")
+    loading_label.pack(pady=50)
+    
+    def process_recommendations():
+        try:
+            # Veri kontrolü - önce veri yüklenmiş mi kontrol et
+            if detay_sonuc_global is None and df_global is None:
+                root.after(0, lambda: display_error(
+                    "Veri yüklenmedi. Lütfen önce veri yükleyin."
+                ))
+                return
+            
+            # Problemleri tespit et
+            data_to_analyze = detay_sonuc_global if detay_sonuc_global is not None else df_global
+            problems = detect_supplier_problems(data_to_analyze)
+            
+            # AI önerileri oluştur
+            recommendations = generate_action_recommendations(problems)
+            
+            # UI'ı güncelle
+            root.after(0, lambda: display_recommendations(recommendations))
+        except Exception as e:
+            root.after(0, lambda: display_error(str(e)))
+    
+    # Thread'de çalıştır
+    threading.Thread(target=process_recommendations, daemon=True).start()
+
+def display_recommendations(recommendations):
+    """Önerileri göster"""
+    global action_recommendations_container
+    
+    # Check if container exists
+    if action_recommendations_container is None or not action_recommendations_container.winfo_exists():
+        print(f"HATA: Action recommendations container mevcut değil")
+        return
+    
+    # Temizle
+    for widget in action_recommendations_container.winfo_children():
+        widget.destroy()
+    
+    if not recommendations:
+        no_data_label = tk.Label(action_recommendations_container, 
+                                text="✅ Harika! Şu anda kritik bir problem tespit edilmedi.\nTüm tedarikçiler iyi performans gösteriyor.",
+                                font=("Segoe UI", 14), fg="#27ae60", bg="white",
+                                justify="center")
+        no_data_label.pack(pady=100)
+        return
+    
+    # Önceliklere göre grupla
+    priority_groups = {
+        'critical': {'title': '🔴 KRİTİK EYLEMLER', 'color': '#e74c3c', 'items': []},
+        'high': {'title': '🟠 YÜKSEK ÖNCELİK', 'color': '#e67e22', 'items': []},
+        'medium': {'title': '🟡 ORTA ÖNCELİK', 'color': '#f39c12', 'items': []},
+        'low': {'title': '🟢 DÜŞÜK ÖNCELİK', 'color': '#27ae60', 'items': []}
+    }
+    
+    for rec in recommendations:
+        priority = rec.get('priority', 'medium')
+        if priority in priority_groups:
+            priority_groups[priority]['items'].append(rec)
+    
+    # Her öncelik grubunu göster
+    for priority in ['critical', 'high', 'medium', 'low']:
+        items = priority_groups[priority]['items']
+        if not items:
+            continue
+        
+        # Grup başlığı
+        group_frame = tk.Frame(action_recommendations_container, bg="white")
+        group_frame.pack(fill="x", padx=20, pady=(20, 10))
+        
+        tk.Label(group_frame, 
+                text=f"{priority_groups[priority]['title']} ({len(items)})",
+                font=("Segoe UI", 14, "bold"),
+                fg=priority_groups[priority]['color'],
+                bg="white").pack(anchor="w")
+        
+        # Her öneriyi göster
+        for rec in items:
+            card_frame = tk.Frame(action_recommendations_container, 
+                                bg="#f8f9fa", 
+                                relief="raised", 
+                                bd=1)
+            card_frame.pack(fill="x", padx=30, pady=10)
+            
+            # Problem başlığı
+            problem_frame = tk.Frame(card_frame, bg=priority_groups[priority]['color'])
+            problem_frame.pack(fill="x")
+            
+            tk.Label(problem_frame,
+                    text=f"⚠️ {rec['problem']}",
+                    font=("Segoe UI", 12, "bold"),
+                    fg="white",
+                    bg=priority_groups[priority]['color']).pack(anchor="w", padx=15, pady=10)
+            
+            # Aksiyonlar
+            actions_frame = tk.Frame(card_frame, bg="#f8f9fa")
+            actions_frame.pack(fill="x", padx=15, pady=15)
+            
+            tk.Label(actions_frame,
+                    text="Önerilen Aksiyonlar:",
+                    font=("Segoe UI", 10, "bold"),
+                    fg="#2c3e50",
+                    bg="#f8f9fa").pack(anchor="w")
+            
+            for i, action in enumerate(rec['actions'][:5], 1):  # Max 5 aksiyon
+                action_text = action.strip()
+                if action_text:
+                    tk.Label(actions_frame,
+                            text=f"  {i}. {action_text}",
+                            font=("Segoe UI", 10),
+                            fg="#34495e",
+                            bg="#f8f9fa",
+                            wraplength=600,
+                            justify="left").pack(anchor="w", pady=2)
+            
+            # Alt bilgi
+            info_frame = tk.Frame(card_frame, bg="#ecf0f1")
+            info_frame.pack(fill="x")
+            
+            tk.Label(info_frame,
+                    text=f"⏰ Zaman Çizelgesi: {rec.get('timeline', 'Bu hafta')}",
+                    font=("Segoe UI", 9),
+                    fg="#7f8c8d",
+                    bg="#ecf0f1").pack(side="left", padx=15, pady=8)
+            
+            # Butonlar
+            btn_frame = tk.Frame(info_frame, bg="#ecf0f1")
+            btn_frame.pack(side="right", padx=15, pady=8)
+            
+            complete_btn = tk.Button(btn_frame,
+                                    text="✓ Tamamlandı",
+                                    font=("Segoe UI", 9),
+                                    bg="#27ae60",
+                                    fg="white",
+                                    cursor="hand2",
+                                    command=lambda: messagebox.showinfo("Tamamlandı", "Aksiyon tamamlandı olarak işaretlendi!"))
+            complete_btn.pack(side="left", padx=5)
+            
+            dismiss_btn = tk.Button(btn_frame,
+                                   text="🗑️ Kapat",
+                                   font=("Segoe UI", 9),
+                                   bg="#95a5a6",
+                                   fg="white",
+                                   cursor="hand2",
+                                   command=lambda c=card_frame: c.pack_forget())
+            dismiss_btn.pack(side="left", padx=5)
+
+def display_error(error_msg):
+    """Hata mesajı göster"""
+    global action_recommendations_container
+    
+    # Check if container exists
+    if action_recommendations_container is None or not action_recommendations_container.winfo_exists():
+        print(f"HATA: Action recommendations container mevcut değil: {error_msg}")
+        return
+    
+    for widget in action_recommendations_container.winfo_children():
+        widget.destroy()
+    
+    error_label = tk.Label(action_recommendations_container,
+                          text=f"❌ Hata oluştu:\n{error_msg}",
+                          font=("Segoe UI", 12), fg="#e74c3c", bg="white",
+                          justify="center")
+    error_label.pack(pady=100)
+
+# ========== END OF ACTION RECOMMENDATIONS ==========
+
 def init_compliance_center_tab():
-    """Tedarikçi Uyumluluk Merkezi - AI Destekli Sertifika ve Sözleşme Yönetimi"""
+    """Tedarikçi Uyumluluk Merkezi - Tabbed Interface with Supplier List, Manual Entry, and Certificate Tracking"""
+    from datetime import datetime
+    import openpyxl
+    from openpyxl import load_workbook, Workbook
     import glob
-    from datetime import datetime, timedelta
     
     for widget in frame_compliance.winfo_children():
         widget.destroy()
     
     # Başlık
-    header = tk.Frame(frame_compliance, bg="#2c3e50", padx=20, pady=20)
+    header = tk.Frame(frame_compliance, bg="#2c3e50", padx=20, pady=15)
     header.pack(fill="x")
-    tk.Label(header, text="🏛️ Tedarikçi Uyumluluk Merkezi (AI Powered)", font=("Segoe UI", 20, "bold"), 
+    tk.Label(header, text="🏛️ Tedarikçi Uyumluluk Merkezi", font=("Segoe UI", 18, "bold"), 
              fg="white", bg="#2c3e50").pack(anchor="w")
-    tk.Label(header, text="Supplier Compliance Center - Fire Satış Kontrol & Çevre Uyumluluk", 
-             font=("Segoe UI", 11), fg="#ecf0f1", bg="#2c3e50").pack(anchor="w")
+    tk.Label(header, text="Tedarikçi Listesi, Manuel Giriş ve Sertifika Takibi", 
+             font=("Segoe UI", 10), fg="#ecf0f1", bg="#2c3e50").pack(anchor="w")
     
-    # Scrollable canvas container
-    canvas_container = tk.Frame(frame_compliance)
-    canvas_container.pack(fill="both", expand=True)
+    # Excel file path
+    EXCEL_FILE_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Cari Bilgiler\Sertifika Durumu Trafik ışığı.xlsx"
     
-    # Canvas and scrollbar
-    canvas = tk.Canvas(canvas_container, bg="#ecf0f1", highlightthickness=0)
-    scrollbar = ttk.Scrollbar(canvas_container, orient="vertical", command=canvas.yview)
+    # Create Notebook (Tabbed Interface)
+    notebook = ttk.Notebook(frame_compliance)
+    notebook.pack(fill="both", expand=True, padx=5, pady=5)
     
-    # Frame inside canvas
-    content = tk.Frame(canvas, padx=15, pady=15, bg="#ecf0f1")
+    # ==================== TAB 1: TEDARİKÇİ LİSTESİ VE AI YORUM ====================
+    tab_list = tk.Frame(notebook, bg="#ecf0f1")
+    notebook.add(tab_list, text=" 📋 Tedarikçi Listesi & Trafik Lambası ")
     
-    # Configure scrolling
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
+    # Top info panel
+    info_panel = tk.Frame(tab_list, bg="white", bd=2, relief="solid", padx=15, pady=10)
+    info_panel.pack(fill="x", padx=10, pady=10)
+    tk.Label(info_panel, text="💡 Excel'den tedarikçileri listeler. Tedarikçi seçip AI yorumu alabilirsiniz.", 
+            font=("Segoe UI", 9, "italic"), bg="white", fg="#34495e").pack()
     
-    # Create window in canvas
-    canvas_frame = canvas.create_window((0, 0), window=content, anchor="nw")
+    # Refresh button and search
+    control_frame = tk.Frame(tab_list, bg="#ecf0f1")
+    control_frame.pack(fill="x", padx=10, pady=5)
     
-    # Update scrollregion when content changes
-    def on_frame_configure(event=None):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.itemconfig(canvas_frame, width=canvas.winfo_width())
+    tk.Button(control_frame, text="🔄 Listeyi Yenile", font=("Segoe UI", 10, "bold"),
+             bg="#3498db", fg="white", padx=15, pady=5,
+             command=lambda: load_suppliers_from_excel()).pack(side="left", padx=5)
     
-    content.bind("<Configure>", on_frame_configure)
-    canvas.bind("<Configure>", on_frame_configure)
+    tk.Label(control_frame, text="Ara:", font=("Segoe UI", 10), bg="#ecf0f1").pack(side="left", padx=(20, 5))
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(control_frame, textvariable=search_var, font=("Segoe UI", 10), width=30)
+    search_entry.pack(side="left", padx=5)
+    search_var.trace("w", lambda *args: filter_suppliers())
     
-    # Mouse wheel scrolling
-    def on_mousewheel(event):
-        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    # Supplier list with traffic light colors
+    list_frame = tk.Frame(tab_list, bg="#ecf0f1")
+    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
     
-    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    # Treeview for suppliers
+    columns = ("Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Mail", "Eksik Evraklar", "Durum")
+    supplier_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
     
-    # Ana bilgi kartları
-    info_container = tk.Frame(content, bg="#ecf0f1")
-    info_container.pack(fill="x", pady=(0, 15))
+    # Column headers
+    supplier_tree.heading("Tedarikçi Adı", text="Tedarikçi Adı")
+    supplier_tree.heading("Yetkili Kişi", text="Yetkili Kişi")
+    supplier_tree.heading("Telefon", text="Telefon")
+    supplier_tree.heading("Mail", text="Mail")
+    supplier_tree.heading("Eksik Evraklar", text="Eksik Evraklar")
+    supplier_tree.heading("Durum", text="Durum")
+    
+    # Column widths
+    supplier_tree.column("Tedarikçi Adı", width=200)
+    supplier_tree.column("Yetkili Kişi", width=150)
+    supplier_tree.column("Telefon", width=120)
+    supplier_tree.column("Mail", width=180)
+    supplier_tree.column("Eksik Evraklar", width=200)
+    supplier_tree.column("Durum", width=100)
+    
+    # Scrollbars
+    vsb = ttk.Scrollbar(list_frame, orient="vertical", command=supplier_tree.yview)
+    hsb = ttk.Scrollbar(list_frame, orient="horizontal", command=supplier_tree.xview)
+    supplier_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    
+    supplier_tree.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+    hsb.grid(row=1, column=0, sticky="ew")
+    
+    list_frame.grid_rowconfigure(0, weight=1)
+    list_frame.grid_columnconfigure(0, weight=1)
+    
+    # Traffic light tags
+    supplier_tree.tag_configure("green", background="#d5f4e6", foreground="#27ae60")
+    supplier_tree.tag_configure("yellow", background="#fcf3cf", foreground="#f39c12")
+    supplier_tree.tag_configure("red", background="#fadbd8", foreground="#c0392b")
+    
+    # AI Comment panel
+    ai_comment_frame = tk.LabelFrame(tab_list, text="🤖 Seçili Tedarikçi için AI Yorumu", 
+                                    font=("Segoe UI", 11, "bold"), bg="white", 
+                                    padx=10, pady=10)
+    ai_comment_frame.pack(fill="x", padx=10, pady=10)
+    
+    ai_comment_scrollbar = tk.Scrollbar(ai_comment_frame, orient="vertical")
+    ai_comment_scrollbar.pack(side="right", fill="y")
+    
+    ai_comment_text = tk.Text(ai_comment_frame, height=8, font=("Segoe UI", 9),
+                             wrap="word", bg="#f8f9fa", relief="solid", bd=1,
+                             yscrollcommand=ai_comment_scrollbar.set)
+    ai_comment_text.pack(side="left", fill="both", expand=True)
+    ai_comment_scrollbar.config(command=ai_comment_text.yview)
+    ai_comment_text.insert("1.0", "Tedarikçi seçip 'AI Yorum Oluştur' butonuna tıklayın...")
+    ai_comment_text.config(state="disabled")
+    
+    # Buttons for selected supplier
+    selected_btn_frame = tk.Frame(tab_list, bg="#ecf0f1")
+    selected_btn_frame.pack(fill="x", padx=10, pady=5)
+    
+    tk.Button(selected_btn_frame, text="🤖 Seçili Tedarikçi için AI Yorum Oluştur", 
+             font=("Segoe UI", 10, "bold"), bg="#9b59b6", fg="white",
+             padx=15, pady=8, command=lambda: generate_ai_for_selected()).pack(side="left", padx=5)
+    
+    def load_suppliers_from_excel():
+        """Load suppliers from Excel file"""
+        # Clear existing items
+        for item in supplier_tree.get_children():
+            supplier_tree.delete(item)
+        
+        try:
+            if os.path.exists(EXCEL_FILE_PATH):
+                wb = load_workbook(EXCEL_FILE_PATH, read_only=True)
+                if "Tedarikçi Uyumluluk" in wb.sheetnames:
+                    ws = wb["Tedarikçi Uyumluluk"]
+                    
+                    # Skip header row
+                    rows = list(ws.iter_rows(min_row=2, values_only=True))
+                    
+                    for row in rows:
+                        if row[0]:  # If supplier name exists
+                            supplier_name = str(row[0]) if row[0] else ""
+                            yetkili = str(row[1]) if row[1] else ""
+                            telefon = str(row[2]) if row[2] else ""
+                            mail = str(row[6]) if len(row) > 6 and row[6] else ""
+                            eksik_evraklar = str(row[10]) if len(row) > 10 and row[10] else ""
+                            
+                            # Determine traffic light status
+                            if eksik_evraklar and eksik_evraklar.strip():
+                                # Count missing documents
+                                missing_count = len([x for x in eksik_evraklar.split(',') if x.strip()])
+                                if missing_count > 3:
+                                    status = "🔴 Kırmızı"
+                                    tag = "red"
+                                elif missing_count > 0:
+                                    status = "🟡 Sarı"
+                                    tag = "yellow"
+                                else:
+                                    status = "🟢 Yeşil"
+                                    tag = "green"
+                            else:
+                                status = "🟢 Yeşil"
+                                tag = "green"
+                            
+                            supplier_tree.insert("", "end", values=(
+                                supplier_name, yetkili, telefon, mail, 
+                                eksik_evraklar[:50] + "..." if len(eksik_evraklar) > 50 else eksik_evraklar,
+                                status
+                            ), tags=(tag,))
+                    
+                    wb.close()
+                    messagebox.showinfo("Başarılı", f"{len(rows)} tedarikçi yüklendi!")
+                else:
+                    messagebox.showwarning("Uyarı", "Excel dosyasında 'Tedarikçi Uyumluluk' sayfası bulunamadı!")
+            else:
+                messagebox.showwarning("Uyarı", f"Excel dosyası bulunamadı:\n{EXCEL_FILE_PATH}")
+        except Exception as e:
+            messagebox.showerror("Hata", f"Excel okuma hatası:\n{str(e)}")
+    
+    def filter_suppliers():
+        """Filter suppliers based on search text"""
+        search_text = search_var.get().lower()
+        
+        # Get all items
+        for item in supplier_tree.get_children():
+            values = supplier_tree.item(item, "values")
+            # Check if search text is in any column
+            if any(search_text in str(val).lower() for val in values):
+                supplier_tree.reattach(item, "", "end")
+            else:
+                supplier_tree.detach(item)
+    
+    def generate_ai_for_selected():
+        """Generate AI comment for selected supplier"""
+        selected = supplier_tree.selection()
+        if not selected:
+            messagebox.showwarning("Uyarı", "Lütfen bir tedarikçi seçin!")
+            return
+        
+        # Get selected supplier data
+        item = selected[0]
+        values = supplier_tree.item(item, "values")
+        
+        supplier_name = values[0]
+        yetkili = values[1]
+        telefon = values[2]
+        mail = values[3]
+        eksik_evraklar = values[4]
+        durum = values[5]
+        
+        # Update AI comment text
+        ai_comment_text.config(state="normal")
+        ai_comment_text.delete("1.0", "end")
+        ai_comment_text.insert("end", "🔍 AI yorumu oluşturuluyor...\n")
+        ai_comment_text.update()
+        
+        try:
+            if GENAI_AVAILABLE and GEMINI_API_KEY:
+                import google.generativeai as genai
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel('models/gemini-2.0-flash')
+                
+                prompt = f"""Aşağıdaki tedarikçi için kısa bir değerlendirme yap:
+
+Tedarikçi Adı: {supplier_name}
+Yetkili Kişi: {yetkili}
+Telefon: {telefon}
+Mail: {mail}
+Eksik Evraklar: {eksik_evraklar if eksik_evraklar else 'Yok'}
+Durum: {durum}
+
+Lütfen:
+1. Eksik evraklara dikkat çek
+2. Uyumluluk durumunu değerlendir
+3. Kısa önerilerde bulun
+
+Türkçe ve profesyonel bir dille, maksimum 150 kelime ile yaz."""
+                
+                response = model.generate_content(prompt)
+                comment = response.text
+                
+                ai_comment_text.delete("1.0", "end")
+                ai_comment_text.insert("end", f"{'='*50}\n")
+                ai_comment_text.insert("end", f"🤖 AI DEĞERLENDİRME: {supplier_name}\n")
+                ai_comment_text.insert("end", f"{'='*50}\n\n")
+                ai_comment_text.insert("end", comment)
+            else:
+                # Fallback
+                comment = f"""📊 TEDARİKÇİ DEĞERLENDİRMESİ: {supplier_name}
+
+Durum: {durum}
+
+"""
+                if "Kırmızı" in durum:
+                    comment += "⚠️ DİKKAT: Çok sayıda eksik evrak var! Acil önlem alınmalı.\n\n"
+                elif "Sarı" in durum:
+                    comment += "⚠️ UYARI: Eksik evraklar mevcut. Takip edilmeli.\n\n"
+                else:
+                    comment += "✅ İYİ DURUM: Eksik evrak yok.\n\n"
+                
+                if eksik_evraklar:
+                    comment += f"Eksik Evraklar: {eksik_evraklar}\n\n"
+                
+                comment += "📌 ÖNERİ: Düzenli kontrol yapılmalı."
+                
+                ai_comment_text.delete("1.0", "end")
+                ai_comment_text.insert("end", comment)
+        
+        except Exception as e:
+            ai_comment_text.delete("1.0", "end")
+            ai_comment_text.insert("end", f"❌ Hata: {str(e)}")
+        
+        ai_comment_text.config(state="disabled")
+    
+    # Initial load
+    load_suppliers_from_excel()
+    
+    # ==================== TAB 2: MANUEL GİRİŞ ====================
+    tab_manual = tk.Frame(notebook, bg="white")
+    notebook.add(tab_manual, text=" 📝 Manuel Giriş ")
+    
+    # Scrollable canvas for manual entry
+    canvas_manual = tk.Canvas(tab_manual, bg="#ecf0f1", highlightthickness=0)
+    scrollbar_manual = ttk.Scrollbar(tab_manual, orient="vertical", command=canvas_manual.yview)
+    content_manual = tk.Frame(canvas_manual, padx=15, pady=15, bg="#ecf0f1")
+    
+    canvas_manual.configure(yscrollcommand=scrollbar_manual.set)
+    canvas_manual.pack(side="left", fill="both", expand=True)
+    scrollbar_manual.pack(side="right", fill="y")
+    
+    canvas_frame_manual = canvas_manual.create_window((0, 0), window=content_manual, anchor="nw")
+    
+    def on_frame_configure_manual(event=None):
+        canvas_manual.configure(scrollregion=canvas_manual.bbox("all"))
+        canvas_manual.itemconfig(canvas_frame_manual, width=canvas_manual.winfo_width())
+    
+    content_manual.bind("<Configure>", on_frame_configure_manual)
+    canvas_manual.bind("<Configure>", on_frame_configure_manual)
+    
+    # Manuel giriş formu
+    form_panel = tk.LabelFrame(content_manual, text="📝 Tedarikçi Bilgileri Girişi", 
+                               font=("Segoe UI", 13, "bold"), bg="white", fg="#3498db",
+                               padx=20, pady=20, relief="solid", bd=2)
+    form_panel.pack(fill="x", pady=(0, 15))
+    
+    # Form elemanlarını saklamak için dictionary
+    form_fields = {}
+    
+    # Form alanları tanımları
+    fields_config = [
+        ("Tedarikçi Adı", 0),
+        ("Yetkili Kişi", 1),
+        ("Telefon", 2),
+        ("Adres", 3),
+        ("Alım Türü", 4),
+        ("Tür", 5),
+        ("Mail", 6),
+        ("Başlangıç Tarihi", 7),
+        ("Bitiş Tarihi", 8),
+        ("Kayıt Tarihi", 9),
+        ("Eksik Evraklar", 10)
+    ]
+    
+    # Form oluştur - 2 sütun layout
+    for idx, (field_name, _) in enumerate(fields_config):
+        row = idx // 2
+        col = (idx % 2) * 2
+        
+        tk.Label(form_panel, text=f"{field_name}:", font=("Segoe UI", 10, "bold"),
+                 bg="white", anchor="w").grid(row=row, column=col, sticky="w", padx=5, pady=8)
+        
+        if field_name == "Eksik Evraklar":
+            entry = tk.Text(form_panel, font=("Segoe UI", 10), width=35, height=3, wrap="word")
+            entry.grid(row=row, column=col+1, padx=5, pady=8, sticky="ew")
+        else:
+            entry = tk.Entry(form_panel, font=("Segoe UI", 10), width=35)
+            entry.grid(row=row, column=col+1, padx=5, pady=8, sticky="ew")
+        
+        form_fields[field_name] = entry
+    
+    form_panel.grid_columnconfigure(1, weight=1)
+    form_panel.grid_columnconfigure(3, weight=1)
+    
+    # AI Yorum alanı (manuel giriş için)
+    ai_panel_manual = tk.LabelFrame(content_manual, text="🤖 AI Yorumu", 
+                            font=("Segoe UI", 13, "bold"), bg="white", fg="#9b59b6",
+                            padx=20, pady=15, relief="solid", bd=2)
+    ai_panel_manual.pack(fill="both", expand=True, pady=(0, 15))
+    
+    ai_scrollbar_manual = tk.Scrollbar(ai_panel_manual, orient="vertical")
+    ai_scrollbar_manual.pack(side="right", fill="y")
+    
+    ai_text_manual = tk.Text(ai_panel_manual, height=10, font=("Segoe UI", 10),
+                     wrap="word", bg="#f8f9fa", relief="solid", bd=1,
+                     yscrollcommand=ai_scrollbar_manual.set)
+    ai_text_manual.pack(side="left", fill="both", expand=True)
+    ai_scrollbar_manual.config(command=ai_text_manual.yview)
+    
+    ai_text_manual.insert("1.0", "AI yorumu için 'AI Yorum Oluştur' butonuna tıklayın...")
+    ai_text_manual.config(state="disabled")
+    
+    def generate_ai_comment_manual():
+        """AI ile yorum oluştur (manuel giriş için)"""
+        data = {}
+        for field_name, widget in form_fields.items():
+            if isinstance(widget, tk.Text):
+                data[field_name] = widget.get("1.0", "end-1c").strip()
+            else:
+                data[field_name] = widget.get().strip()
+        
+        if not data.get("Tedarikçi Adı"):
+            messagebox.showwarning("Uyarı", "Lütfen en az Tedarikçi Adı girin!")
+            return
+        
+        ai_text_manual.config(state="normal")
+        ai_text_manual.delete("1.0", "end")
+        ai_text_manual.insert("end", "🔍 AI yorumu oluşturuluyor...\n")
+        ai_text_manual.update()
+        
+        try:
+            if GENAI_AVAILABLE and GEMINI_API_KEY:
+                import google.generativeai as genai
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel('models/gemini-2.0-flash')
+                
+                prompt = f"""Aşağıdaki tedarikçi bilgilerine dayanarak kısa bir değerlendirme ve yorum yap:
+
+Tedarikçi Adı: {data.get('Tedarikçi Adı', 'Belirtilmemiş')}
+Yetkili Kişi: {data.get('Yetkili Kişi', 'Belirtilmemiş')}
+Telefon: {data.get('Telefon', 'Belirtilmemiş')}
+Adres: {data.get('Adres', 'Belirtilmemiş')}
+Alım Türü: {data.get('Alım Türü', 'Belirtilmemiş')}
+Tür: {data.get('Tür', 'Belirtilmemiş')}
+Mail: {data.get('Mail', 'Belirtilmemiş')}
+Başlangıç Tarihi: {data.get('Başlangıç Tarihi', 'Belirtilmemiş')}
+Bitiş Tarihi: {data.get('Bitiş Tarihi', 'Belirtilmemiş')}
+Kayıt Tarihi: {data.get('Kayıt Tarihi', 'Belirtilmemiş')}
+Eksik Evraklar: {data.get('Eksik Evraklar', 'Yok')}
+
+Lütfen:
+1. Eksik evraklara dikkat çek
+2. Sözleşme sürelerine yorum yap
+3. Genel bir uyumluluk değerlendirmesi yap
+4. Önerilerde bulun
+
+Türkçe ve profesyonel bir dille yaz."""
+                
+                response = model.generate_content(prompt)
+                comment = response.text
+                
+                ai_text_manual.delete("1.0", "end")
+                ai_text_manual.insert("end", f"{'='*60}\n")
+                ai_text_manual.insert("end", f"🤖 AI DEĞERLENDİRME\n")
+                ai_text_manual.insert("end", f"{'='*60}\n\n")
+                ai_text_manual.insert("end", comment)
+                ai_text_manual.insert("end", f"\n\n{'='*60}\n")
+                ai_text_manual.insert("end", f"⚠️ NOT: Bu yorum Excel'e kaydedilmeyecektir.\n")
+                ai_text_manual.insert("end", f"{'='*60}\n")
+            else:
+                comment = f"""TEDARİKÇİ DEĞERLENDİRMESİ
+
+Tedarikçi: {data.get('Tedarikçi Adı')}
+Yetkili: {data.get('Yetkili Kişi', 'Belirtilmemiş')}
+
+"""
+                if data.get('Eksik Evraklar'):
+                    comment += f"""⚠️ UYARI: Eksik evraklar mevcut!
+Eksik Evraklar: {data.get('Eksik Evraklar')}
+Bu evrakların en kısa sürede tamamlanması gerekmektedir.
+
+"""
+                else:
+                    comment += "✅ Eksik evrak bildirimi yok.\n\n"
+                
+                comment += """📌 ÖNERİLER:
+- Tüm sözleşme ve evrak sürelerini düzenli takip edin
+- İletişim bilgilerinin güncel olduğundan emin olun
+- Uyumluluk belgelerini periyodik olarak kontrol edin
+
+⚠️ NOT: Bu yorum Excel'e kaydedilmeyecektir."""
+                
+                ai_text_manual.delete("1.0", "end")
+                ai_text_manual.insert("end", comment)
+        
+        except Exception as e:
+            ai_text_manual.delete("1.0", "end")
+            ai_text_manual.insert("end", f"❌ Hata oluştu: {str(e)}\n\n")
+            ai_text_manual.insert("end", "Lütfen API anahtarınızı kontrol edin veya tekrar deneyin.")
+        
+        ai_text_manual.config(state="disabled")
+    
+    def save_to_excel():
+        """Form verilerini Excel'e kaydet (AI yorumu hariç)"""
+        data = {}
+        for field_name, widget in form_fields.items():
+            if isinstance(widget, tk.Text):
+                data[field_name] = widget.get("1.0", "end-1c").strip()
+            else:
+                data[field_name] = widget.get().strip()
+        
+        if not data.get("Tedarikçi Adı"):
+            messagebox.showwarning("Uyarı", "Tedarikçi Adı zorunludur!")
+            return
+        
+        try:
+            if os.path.exists(EXCEL_FILE_PATH):
+                wb = load_workbook(EXCEL_FILE_PATH)
+                if "Tedarikçi Uyumluluk" in wb.sheetnames:
+                    ws = wb["Tedarikçi Uyumluluk"]
+                else:
+                    ws = wb.create_sheet("Tedarikçi Uyumluluk")
+                    headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", 
+                              "Alım Türü", "Tür", "Mail", "Başlangıç Tarihi", 
+                              "Bitiş Tarihi", "Kayıt Tarihi", "Eksik Evraklar"]
+                    ws.append(headers)
+            else:
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Tedarikçi Uyumluluk"
+                headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", 
+                          "Alım Türü", "Tür", "Mail", "Başlangıç Tarihi", 
+                          "Bitiş Tarihi", "Kayıt Tarihi", "Eksik Evraklar"]
+                ws.append(headers)
+            
+            row_data = [
+                data.get("Tedarikçi Adı", ""),
+                data.get("Yetkili Kişi", ""),
+                data.get("Telefon", ""),
+                data.get("Adres", ""),
+                data.get("Alım Türü", ""),
+                data.get("Tür", ""),
+                data.get("Mail", ""),
+                data.get("Başlangıç Tarihi", ""),
+                data.get("Bitiş Tarihi", ""),
+                data.get("Kayıt Tarihi", ""),
+                data.get("Eksik Evraklar", "")
+            ]
+            ws.append(row_data)
+            
+            wb.save(EXCEL_FILE_PATH)
+            messagebox.showinfo("Başarılı", f"Veriler başarıyla kaydedildi!\n\nDosya: {EXCEL_FILE_PATH}")
+            
+            if activity_logger:
+                activity_logger.log_activity(f"Tedarikçi kaydedildi: {data.get('Tedarikçi Adı')}", 
+                                            "Tedarikçi Uyumluluk")
+            
+            # Refresh the list in tab 1
+            load_suppliers_from_excel()
+        
+        except Exception as e:
+            messagebox.showerror("Hata", f"Excel'e kaydetme hatası:\n{str(e)}")
+    
+    def clear_form():
+        """Formu temizle"""
+        for widget in form_fields.values():
+            if isinstance(widget, tk.Text):
+                widget.delete("1.0", "end")
+            else:
+                widget.delete(0, tk.END)
+        
+        ai_text_manual.config(state="normal")
+        ai_text_manual.delete("1.0", "end")
+        ai_text_manual.insert("1.0", "AI yorumu için 'AI Yorum Oluştur' butonuna tıklayın...")
+        ai_text_manual.config(state="disabled")
+    
+    # Butonlar
+    btn_container_manual = tk.Frame(content_manual, bg="#ecf0f1")
+    btn_container_manual.pack(fill="x", pady=(0, 10))
+    
+    tk.Button(btn_container_manual, text="💾 Kaydet", font=("Segoe UI", 11, "bold"),
+             bg="#27ae60", fg="white", relief="raised", bd=2, cursor="hand2",
+             padx=20, pady=10, command=save_to_excel).pack(side="left", padx=5)
+    
+    tk.Button(btn_container_manual, text="🤖 AI Yorum Oluştur", font=("Segoe UI", 11, "bold"),
+             bg="#9b59b6", fg="white", relief="raised", bd=2, cursor="hand2",
+             padx=20, pady=10, command=generate_ai_comment_manual).pack(side="left", padx=5)
+    
+    tk.Button(btn_container_manual, text="🔄 Temizle", font=("Segoe UI", 11, "bold"),
+             bg="#e67e22", fg="white", relief="raised", bd=2, cursor="hand2",
+             padx=20, pady=10, command=clear_form).pack(side="left", padx=5)
+    
+    # Bilgi notu
+    info_frame_manual = tk.Frame(content_manual, bg="white", bd=2, relief="solid", padx=15, pady=10)
+    info_frame_manual.pack(fill="x", pady=(0, 10))
+    
+    info_text = """ℹ️ KULLANIM NOTLARI:
+    
+1. Tedarikçi bilgilerini manuel olarak girin
+2. "AI Yorum Oluştur" butonu ile AI destekli değerlendirme alın (Bu yorum Excel'e kaydedilmez)
+3. "Kaydet" butonu ile sadece manuel girilen bilgiler Excel'e kaydedilir
+4. Excel dosya yolu: X:\\01.Public\\TEDARİKÇİ PERFORMANS\\Cari Bilgiler\\Sertifika Durumu Trafik ışığı.xlsx"""
+    
+    tk.Label(info_frame_manual, text=info_text, font=("Segoe UI", 9), 
+            bg="white", fg="#34495e", justify="left", anchor="w").pack(fill="x")
+    
+    # ==================== TAB 3: SERTİFİKA VE SÖZLEŞME TAKİBİ ====================
+    tab_cert = tk.Frame(notebook, bg="#ecf0f1")
+    notebook.add(tab_cert, text=" 🏆 Sertifika & Sözleşme Takibi ")
+    
+    # Scrollable canvas for certificate tracking
+    canvas_cert = tk.Canvas(tab_cert, bg="#ecf0f1", highlightthickness=0)
+    scrollbar_cert = ttk.Scrollbar(tab_cert, orient="vertical", command=canvas_cert.yview)
+    content_cert = tk.Frame(canvas_cert, padx=15, pady=15, bg="#ecf0f1")
+    
+    canvas_cert.configure(yscrollcommand=scrollbar_cert.set)
+    canvas_cert.pack(side="left", fill="both", expand=True)
+    scrollbar_cert.pack(side="right", fill="y")
+    
+    canvas_frame_cert = canvas_cert.create_window((0, 0), window=content_cert, anchor="nw")
+    
+    def on_frame_configure_cert(event=None):
+        canvas_cert.configure(scrollregion=canvas_cert.bbox("all"))
+        canvas_cert.itemconfig(canvas_frame_cert, width=canvas_cert.winfo_width())
+    
+    content_cert.bind("<Configure>", on_frame_configure_cert)
+    canvas_cert.bind("<Configure>", on_frame_configure_cert)
+    
+    # Info cards
+    info_container_cert = tk.Frame(content_cert, bg="#ecf0f1")
+    info_container_cert.pack(fill="x", pady=(0, 15))
     
     def create_info_card(parent, title, value, color, icon):
         """Bilgi kartı oluştur"""
@@ -7614,7 +10706,7 @@ def init_compliance_center_tab():
         
         return card
     
-    # Dosya sayılarını hesapla
+    # Count certificates and contracts
     cert_count = 0
     contract_count = 0
     
@@ -7634,70 +10726,70 @@ def init_compliance_center_tab():
     
     total_docs = cert_count + contract_count
     
-    # Bilgi kartları
-    create_info_card(info_container, "Toplam Belge", str(total_docs), "#3498db", "📄")
-    create_info_card(info_container, "Sertifikalar", str(cert_count), "#27ae60", "🏆")
-    create_info_card(info_container, "Sözleşmeler", str(contract_count), "#e74c3c", "📝")
+    # Info cards
+    create_info_card(info_container_cert, "Toplam Belge", str(total_docs), "#3498db", "📄")
+    create_info_card(info_container_cert, "Sertifikalar", str(cert_count), "#27ae60", "🏆")
+    create_info_card(info_container_cert, "Sözleşmeler", str(contract_count), "#e74c3c", "📝")
     
-    # 🔥 FIRE SATIŞ KONTROL PANELİ
-    fire_panel = tk.LabelFrame(content, text="🔥 Fire Satış Çevre Uyumluluk Kontrolü", 
+    # Fire Satış Kontrol Paneli
+    fire_panel = tk.LabelFrame(content_cert, text="🔥 Fire Satış Çevre Uyumluluk Kontrolü", 
                                font=("Segoe UI", 13, "bold"), bg="white", fg="#e67e22",
                                padx=15, pady=15, relief="solid", bd=2)
     fire_panel.pack(fill="x", pady=(0, 15))
     
-    # Kontrol formu
-    form_frame = tk.Frame(fire_panel, bg="white")
-    form_frame.pack(fill="x", pady=10)
+    # Control form
+    form_frame_cert = tk.Frame(fire_panel, bg="white")
+    form_frame_cert.pack(fill="x", pady=10)
     
-    tk.Label(form_frame, text="Tedarikçi Adı:", font=("Segoe UI", 10, "bold"),
+    tk.Label(form_frame_cert, text="Tedarikçi Adı:", font=("Segoe UI", 10, "bold"),
              bg="white").grid(row=0, column=0, sticky="w", padx=5, pady=5)
     
-    supplier_entry = tk.Entry(form_frame, font=("Segoe UI", 10), width=30)
+    supplier_entry = tk.Entry(form_frame_cert, font=("Segoe UI", 10), width=30)
     supplier_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
     
-    tk.Label(form_frame, text="Tedarikçi Email:", font=("Segoe UI", 10, "bold"),
+    tk.Label(form_frame_cert, text="Tedarikçi Email:", font=("Segoe UI", 10, "bold"),
              bg="white").grid(row=1, column=0, sticky="w", padx=5, pady=5)
     
-    email_entry = tk.Entry(form_frame, font=("Segoe UI", 10), width=30)
+    email_entry = tk.Entry(form_frame_cert, font=("Segoe UI", 10), width=30)
     email_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
     
-    tk.Label(form_frame, text="Defacto Sözleşme Şablonu:", font=("Segoe UI", 10, "bold"),
+    tk.Label(form_frame_cert, text="Defacto Sözleşme Şablonu:", font=("Segoe UI", 10, "bold"),
              bg="white").grid(row=2, column=0, sticky="w", padx=5, pady=5)
     
-    template_frame = tk.Frame(form_frame, bg="white")
-    template_frame.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+    template_frame_cert = tk.Frame(form_frame_cert, bg="white")
+    template_frame_cert.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
     
-    template_entry = tk.Entry(template_frame, font=("Segoe UI", 9), width=30)
-    template_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+    template_entry_cert = tk.Entry(template_frame_cert, font=("Segoe UI", 9), width=30)
+    template_entry_cert.pack(side="left", fill="x", expand=True, padx=(0, 5))
     
-    def browse_template():
+    def browse_template_cert():
         """Şablon sözleşme dosyası seç"""
         file_path = filedialog.askopenfilename(
             title="Defacto Sözleşme Şablonu Seçin",
             filetypes=[("PDF Dosyaları", "*.pdf"), ("Word Dosyaları", "*.docx"), ("Metin Dosyaları", "*.txt"), ("Tüm Dosyalar", "*.*")]
         )
         if file_path:
-            template_entry.delete(0, tk.END)
-            template_entry.insert(0, file_path)
+            template_entry_cert.delete(0, tk.END)
+            template_entry_cert.insert(0, file_path)
     
-    tk.Button(template_frame, text="Gözat", font=("Segoe UI", 8),
-             bg="#95a5a6", fg="white", cursor="hand2", command=browse_template).pack(side="left")
+    tk.Button(template_frame_cert, text="Gözat", font=("Segoe UI", 8),
+             bg="#95a5a6", fg="white", cursor="hand2", command=browse_template_cert).pack(side="left")
     
-    form_frame.grid_columnconfigure(1, weight=1)
+    form_frame_cert.grid_columnconfigure(1, weight=1)
     
-    # Sonuç alanı with scrollbar
-    result_frame = tk.Frame(fire_panel, bg="white")
-    result_frame.pack(fill="both", expand=True, pady=10)
+    # Result area
+    result_frame_cert = tk.Frame(fire_panel, bg="white")
+    result_frame_cert.pack(fill="both", expand=True, pady=10)
     
-    result_scrollbar = tk.Scrollbar(result_frame, orient="vertical")
-    result_scrollbar.pack(side="right", fill="y")
+    result_scrollbar_cert = tk.Scrollbar(result_frame_cert, orient="vertical")
+    result_scrollbar_cert.pack(side="right", fill="y")
     
-    result_text = tk.Text(result_frame, height=12, width=80, font=("Consolas", 9),
+    result_text_cert = tk.Text(result_frame_cert, height=12, width=80, font=("Consolas", 9),
                          wrap="word", bg="#f8f9fa", relief="solid", bd=1,
-                         yscrollcommand=result_scrollbar.set)
-    result_text.pack(side="left", fill="both", expand=True)
+                         yscrollcommand=result_scrollbar_cert.set)
+    result_text_cert.pack(side="left", fill="both", expand=True)
     
-    result_scrollbar.config(command=result_text.yview)
+    result_scrollbar_cert.config(command=result_text_cert.yview)
     
     def check_fire_compliance():
         """Fire satış uyumluluk kontrolü yap"""
@@ -7706,27 +10798,26 @@ def init_compliance_center_tab():
             messagebox.showwarning("Uyarı", "Lütfen tedarikçi adı girin!")
             return
         
-        result_text.delete("1.0", "end")
-        result_text.insert("end", "🔍 Kontrol ediliyor...\n\n")
-        result_text.update()
+        result_text_cert.delete("1.0", "end")
+        result_text_cert.insert("end", "🔍 Kontrol ediliyor...\n\n")
+        result_text_cert.update()
         
         # Uyumluluk kontrolü
         compliance = check_waste_disposal_compliance(supplier)
         
         # Sonuçları göster
-        result_text.delete("1.0", "end")
-        result_text.insert("end", f"{'='*60}\n")
-        result_text.insert("end", f"🏛️ FIRE SATIŞ ÇEVRE UYUMLULUK RAPORU\n")
-        result_text.insert("end", f"{'='*60}\n\n")
+        result_text_cert.delete("1.0", "end")
+        result_text_cert.insert("end", f"{'='*60}\n")
+        result_text_cert.insert("end", f"🏛️ FIRE SATIŞ ÇEVRE UYUMLULUK RAPORU\n")
+        result_text_cert.insert("end", f"{'='*60}\n\n")
         
-        result_text.insert("end", f"Tedarikçi: {compliance['supplier']}\n")
-        result_text.insert("end", f"Uyumluluk Skoru: %{compliance['score']}\n")
-        result_text.insert("end", f"Durum: {'✅ TAM UYUMLU' if compliance['score'] == 100 else '⚠️ EKSİKLER VAR'}\n\n")
+        result_text_cert.insert("end", f"Tedarikçi: {compliance['supplier']}\n")
+        result_text_cert.insert("end", f"Uyumluluk Skoru: %{compliance['score']}\n")
+        result_text_cert.insert("end", f"Durum: {'✅ TAM UYUMLU' if compliance['score'] == 100 else '⚠️ EKSİKLER VAR'}\n\n")
         
-        result_text.insert("end", "📋 Gerekli Belgeler Durumu:\n")
-        result_text.insert("end", f"{'-'*60}\n")
+        result_text_cert.insert("end", "📋 Gerekli Belgeler Durumu:\n")
+        result_text_cert.insert("end", f"{'-'*60}\n")
         
-        # Belge durumlarını göster
         docs_turkish = {
             "cevre_izin": "Çevre İzin ve Lisans Belgesi",
             "atik_kodlari": "Atık Kodları Lisansı (200111)",
@@ -7739,26 +10830,25 @@ def init_compliance_center_tab():
         for doc_key, doc_name in docs_turkish.items():
             status = compliance['documents'][doc_key]
             status_icon = "✅" if status else "❌"
-            result_text.insert("end", f"{status_icon} {doc_name} - {'MEVCUT' if status else 'EKSİK'}\n")
+            result_text_cert.insert("end", f"{status_icon} {doc_name} - {'MEVCUT' if status else 'EKSİK'}\n")
             if not status:
                 missing_docs.append(doc_name)
         
         if missing_docs:
-            result_text.insert("end", f"\n⚠️ Eksik Belgeler ({len(missing_docs)}):\n")
+            result_text_cert.insert("end", f"\n⚠️ Eksik Belgeler ({len(missing_docs)}):\n")
             for doc in missing_docs:
-                result_text.insert("end", f"  • {doc}\n")
+                result_text_cert.insert("end", f"  • {doc}\n")
         
         if compliance['found_files']:
-            result_text.insert("end", f"\n✅ Bulunan Belgeler ({len(compliance['found_files'])}):\n")
+            result_text_cert.insert("end", f"\n✅ Bulunan Belgeler ({len(compliance['found_files'])}):\n")
             for doc_name, doc_path in compliance['found_files']:
-                result_text.insert("end", f"  • {doc_name}: {os.path.basename(doc_path)}\n")
+                result_text_cert.insert("end", f"  • {doc_name}: {os.path.basename(doc_path)}\n")
         else:
-            result_text.insert("end", f"\n⚠️ Hiçbir belge bulunamadı!\n")
-            result_text.insert("end", f"Tedarikçi adının dosya adlarında geçtiğinden emin olun.\n")
+            result_text_cert.insert("end", f"\n⚠️ Hiçbir belge bulunamadı!\n")
+            result_text_cert.insert("end", f"Tedarikçi adının dosya adlarında geçtiğinden emin olun.\n")
         
-        result_text.insert("end", f"\n{'='*60}\n")
+        result_text_cert.insert("end", f"\n{'='*60}\n")
         
-        # Global değişkene kaydet (email için)
         globals()['last_compliance_check'] = compliance
     
     def generate_contract():
@@ -7772,20 +10862,20 @@ def init_compliance_center_tab():
             messagebox.showwarning("Uyarı", "Lütfen önce uyumluluk kontrolü yapın!")
             return
         
-        result_text.delete("1.0", "end")
-        template_path = template_entry.get().strip() if template_entry.get().strip() else None
+        result_text_cert.delete("1.0", "end")
+        template_path = template_entry_cert.get().strip() if template_entry_cert.get().strip() else None
         
         if template_path:
-            result_text.insert("end", "🤖 AI ile sözleşme oluşturuluyor (Defacto şablonu kullanılıyor)...\n\n")
+            result_text_cert.insert("end", "🤖 AI ile sözleşme oluşturuluyor (Defacto şablonu kullanılıyor)...\n\n")
         else:
-            result_text.insert("end", "🤖 AI ile sözleşme oluşturuluyor...\n\n")
-        result_text.update()
+            result_text_cert.insert("end", "🤖 AI ile sözleşme oluşturuluyor...\n\n")
+        result_text_cert.update()
         
         # AI ile sözleşme oluştur
         contract = generate_waste_contract_with_ai(supplier, globals()['last_compliance_check'], template_path)
         
-        result_text.delete("1.0", "end")
-        result_text.insert("end", contract)
+        result_text_cert.delete("1.0", "end")
+        result_text_cert.insert("end", contract)
     
     def send_email():
         """Tedarikçiye email gönder"""
@@ -7801,11 +10891,8 @@ def init_compliance_center_tab():
             return
         
         compliance_data = globals()['last_compliance_check']
-        
-        # AI yorumu oluştur
         ai_msg = "Lütfen eksik belgeleri en kısa sürede tamamlayınız." if compliance_data['score'] < 100 else "Tüm belgeleriniz eksiksizdir."
         
-        # Email gönder
         success, message = send_compliance_email(email, supplier, compliance_data, ai_msg)
         
         if success:
@@ -7813,27 +10900,27 @@ def init_compliance_center_tab():
         else:
             messagebox.showerror("Hata", message)
     
-    # Butonlar
-    btn_container = tk.Frame(fire_panel, bg="white")
-    btn_container.pack(fill="x", pady=(0, 5))
+    # Buttons
+    btn_container_cert = tk.Frame(fire_panel, bg="white")
+    btn_container_cert.pack(fill="x", pady=(0, 5))
     
-    tk.Button(btn_container, text="🔍 Uyumluluk Kontrolü Yap", font=("Segoe UI", 10, "bold"),
+    tk.Button(btn_container_cert, text="🔍 Uyumluluk Kontrolü Yap", font=("Segoe UI", 10, "bold"),
              bg="#3498db", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=15, pady=8, command=check_fire_compliance).pack(side="left", padx=5)
     
-    tk.Button(btn_container, text="🤖 AI ile Sözleşme Oluştur", font=("Segoe UI", 10, "bold"),
+    tk.Button(btn_container_cert, text="🤖 AI ile Sözleşme Oluştur", font=("Segoe UI", 10, "bold"),
              bg="#9b59b6", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=15, pady=8, command=generate_contract).pack(side="left", padx=5)
     
-    tk.Button(btn_container, text="📧 Tedarikçiye Email Gönder", font=("Segoe UI", 10, "bold"),
+    tk.Button(btn_container_cert, text="📧 Tedarikçiye Email Gönder", font=("Segoe UI", 10, "bold"),
              bg="#e67e22", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=15, pady=8, command=send_email).pack(side="left", padx=5)
     
-    # Ana grid container - 2 sütun
-    main_grid = tk.Frame(content, bg="#ecf0f1")
-    main_grid.pack(fill="both", expand=True)
-    main_grid.grid_columnconfigure(0, weight=1)
-    main_grid.grid_columnconfigure(1, weight=1)
+    # Document sections grid
+    main_grid_cert = tk.Frame(content_cert, bg="#ecf0f1")
+    main_grid_cert.pack(fill="both", expand=True)
+    main_grid_cert.grid_columnconfigure(0, weight=1)
+    main_grid_cert.grid_columnconfigure(1, weight=1)
     
     def create_document_section(parent, title, path, color, icon, column):
         """Belge bölümü oluştur"""
@@ -7850,26 +10937,24 @@ def init_compliance_center_tab():
         )
         section_frame.grid(row=0, column=column, padx=5, pady=5, sticky="nsew")
         
-        # Scroll container
         scroll_container = tk.Frame(section_frame, bg="white")
         scroll_container.pack(fill="both", expand=True)
         
-        canvas = tk.Canvas(scroll_container, bg="white", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg="white")
+        doc_canvas = tk.Canvas(scroll_container, bg="white", highlightthickness=0, height=300)
+        doc_scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=doc_canvas.yview)
+        scrollable_frame = tk.Frame(doc_canvas, bg="white")
         
         scrollable_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            lambda e: doc_canvas.configure(scrollregion=doc_canvas.bbox("all"))
         )
         
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        doc_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        doc_canvas.configure(yscrollcommand=doc_scrollbar.set)
         
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        doc_canvas.pack(side="left", fill="both", expand=True)
+        doc_scrollbar.pack(side="right", fill="y")
         
-        # Dosyaları listele
         if not os.path.exists(path):
             tk.Label(scrollable_frame, 
                     text=f"⚠️ Klasör bulunamadı:\n{path}",
@@ -7896,18 +10981,15 @@ def init_compliance_center_tab():
                     file_size_kb = file_size / 1024
                     file_mtime = datetime.fromtimestamp(os.path.getmtime(pdf_file))
                     
-                    # Dosya kartı
                     file_card = tk.Frame(scrollable_frame, bg="#f8f9fa", bd=1, relief="solid", padx=10, pady=8)
                     file_card.pack(fill="x", pady=3, padx=5)
                     
-                    # Dosya adı
                     name_label = tk.Label(file_card, text=f"📄 {file_name}", 
                                          font=("Segoe UI", 9, "bold"),
                                          bg="#f8f9fa", fg="#2c3e50",
                                          anchor="w")
                     name_label.pack(fill="x")
                     
-                    # Dosya bilgileri
                     info_text = f"📏 {file_size_kb:.1f} KB  |  📅 {file_mtime.strftime('%d.%m.%Y %H:%M')}"
                     info_label = tk.Label(file_card, text=info_text,
                                          font=("Segoe UI", 8),
@@ -7915,27 +10997,21 @@ def init_compliance_center_tab():
                                          anchor="w")
                     info_label.pack(fill="x")
                     
-                    # Butonlar
                     btn_frame = tk.Frame(file_card, bg="#f8f9fa")
                     btn_frame.pack(fill="x", pady=(5, 0))
                     
                     def open_file(filepath=pdf_file):
                         try:
                             import subprocess
-                            if os.name == 'nt':  # Windows
+                            if os.name == 'nt':
                                 os.startfile(filepath)
-                            elif os.name == 'posix':  # macOS/Linux
+                            elif os.name == 'posix':
                                 subprocess.call(['open', filepath])
                             if activity_logger:
                                 activity_logger.log_activity(f"Belge açıldı: {os.path.basename(filepath)}", 
                                                             "Tedarikçi Uyumluluk")
                         except Exception as e:
                             messagebox.showerror("Hata", f"Dosya açılırken hata oluştu:\n{str(e)}")
-                    
-                    def copy_path(filepath=pdf_file):
-                        root.clipboard_clear()
-                        root.clipboard_append(filepath)
-                        messagebox.showinfo("Başarılı", "Dosya yolu panoya kopyalandı!")
                     
                     open_btn = tk.Button(btn_frame, text="📂 Aç", 
                                         font=("Segoe UI", 8),
@@ -7946,15 +11022,6 @@ def init_compliance_center_tab():
                                         command=open_file)
                     open_btn.pack(side="left", padx=2)
                     
-                    copy_btn = tk.Button(btn_frame, text="📋 Yol Kopyala",
-                                        font=("Segoe UI", 8),
-                                        bg="#95a5a6", fg="white",
-                                        relief="flat",
-                                        cursor="hand2",
-                                        padx=8, pady=2,
-                                        command=copy_path)
-                    copy_btn.pack(side="left", padx=2)
-                    
         except Exception as e:
             tk.Label(scrollable_frame,
                     text=f"❌ Hata: {str(e)}",
@@ -7962,40 +11029,11 @@ def init_compliance_center_tab():
                     fg="#e74c3c",
                     bg="white").pack(pady=20, padx=10)
     
-    # Sertifikalar bölümü (sol)
-    create_document_section(main_grid, "SERTİFİKALAR", MASTER_SERTIFIKA_PATH, "#27ae60", "🏆", 0)
+    # Certificates section (left)
+    create_document_section(main_grid_cert, "SERTİFİKALAR", MASTER_SERTIFIKA_PATH, "#27ae60", "🏆", 0)
     
-    # Sözleşmeler bölümü (sağ)
-    create_document_section(main_grid, "SÖZLEŞMELER", MASTER_SOZLESME_PATH, "#e74c3c", "📝", 1)
-    
-    # Alt bilgi
-    info_frame = tk.Frame(content, bg="#ecf0f1", pady=10)
-    info_frame.pack(side="bottom", fill="x")
-    
-    info_label = tk.Label(
-        info_frame,
-        text="💡 Belgeleri görüntülemek için '📂 Aç' butonuna tıklayın  |  🔄 Yeni belgeler otomatik olarak burada görünecektir",
-        font=("Segoe UI", 9, "italic"),
-        fg="#7f8c8d",
-        bg="#ecf0f1"
-    )
-    info_label.pack()
-    
-    # Yenile butonu
-    refresh_btn = tk.Button(
-        info_frame,
-        text="🔄 Listeyi Yenile",
-        font=("Segoe UI", 10, "bold"),
-        bg="#3498db",
-        fg="white",
-        relief="raised",
-        bd=2,
-        cursor="hand2",
-        padx=15,
-        pady=8,
-        command=init_compliance_center_tab
-    )
-    refresh_btn.pack(pady=(10, 0))
+    # Contracts section (right)
+    create_document_section(main_grid_cert, "SÖZLEŞMELER", MASTER_SOZLESME_PATH, "#e74c3c", "📝", 1)
 
 # ---------- GUI BAŞLATILMASI ----------
 def show_page(page_name):
@@ -8144,6 +11182,18 @@ frame_stok = ttk.Frame(content_area, padding="10")
 # Tedarikçi Uyumluluk Merkezi Frame
 frame_compliance = ttk.Frame(content_area, padding="10")
 
+# Akıllı Email Otomasyonu Frame
+frame_email_automation = ttk.Frame(content_area, padding="10")
+
+# Email Gelen Kutusu Frame (Email Inbox)
+frame_email_inbox = ttk.Frame(content_area, padding="10")
+
+# Doğal Dil Sorgu Motoru Frame
+frame_nlq = ttk.Frame(content_area, padding="10")
+
+# Akıllı Eylem Önerileri Frame
+frame_action_recommendations = ttk.Frame(content_area, padding="10")
+
 frames = {
     "Yönetim Paneli": frame_ozet,
     "Analiz": frame_analiz,
@@ -8176,7 +11226,15 @@ frames = {
     # Stok Yönetimi
     "Stok Yönetimi": frame_stok,
     # Tedarikçi Uyumluluk Merkezi
-    "Tedarikçi Uyumluluk": frame_compliance
+    "Tedarikçi Uyumluluk": frame_compliance,
+    # Akıllı Email Otomasyonu
+    "Akıllı Email": frame_email_automation,
+    # Email Gelen Kutusu
+    "Email Gelen Kutusu": frame_email_inbox,
+    # Doğal Dil Sorgu Motoru
+    "Doğal Dil Sorguları": frame_nlq,
+    # Akıllı Eylem Önerileri
+    "Akıllı Eylem Önerileri": frame_action_recommendations
 }
 
 menu_items = [
@@ -8184,6 +11242,10 @@ menu_items = [
     ("🔍 Analiz & Veri", "Analiz"),
     ("🛒 Akıllı Sipariş", "Akıllı Sipariş"),
     ("💰 Pazarlık Robotu", "Pazarlık Robotu"), 
+    ("📧 Akıllı Email", "Akıllı Email"), # YENİ! Email Otomasyonu
+    ("📥 Email Gelen Kutusu", "Email Gelen Kutusu"), # YENİ! Email Inbox & Reply
+    ("🗣️ Doğal Dil Sorguları", "Doğal Dil Sorguları"), # YENİ! EN ÖNEMLİ MODÜL
+    ("🎯 Akıllı Eylem Önerileri", "Akıllı Eylem Önerileri"), # YENİ! Otomatik Aksiyon Önerileri
     ("📰 Sektör Haberleri", "Sektör Haberleri"), # YENİ BUTON
     ("🔮 Trend Avcısı", "Trend Avcısı"), # TREND HUNTER
     ("🏭 Reklamasyon Yönetimi", "Reklamasyon Yönetimi"), # YENİ BUTON
@@ -8220,6 +11282,15 @@ status_label.pack(side="bottom", fill="x")
 draw_dashboard(frame_ozet)
 init_map_tab() 
 init_chat_tab() 
+init_email_automation_tab()  # Akıllı Email Otomasyonu - YENİ!
+init_email_inbox_tab()  # Email Gelen Kutusu - Email Inbox & Reply Management!
+init_natural_language_query_tab()  # Doğal Dil Sorgu Motoru - EN ÖNEMLİ MODÜL!
+try:
+    init_action_recommendations_tab()  # Akıllı Eylem Önerileri - OTOMATIK AKSİYON ÖNERİLERİ!
+except Exception as e:
+    print(f"HATA: Akıllı Eylem Önerileri başlatılamadı: {e}")
+    import traceback
+    traceback.print_exc()
 init_scorecard_tab() 
 init_ocr_tab() 
 init_smart_order_tab() 
