@@ -8120,8 +8120,16 @@ def parse_email_message(email_message):
         # Get from address
         from_addr = email_message.get('From', '')
         
-        # Get date
+        # Get date - parse and convert to sortable ISO format
         date_str = email_message.get('Date', '')
+        if date_str:
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(date_str)
+                # Convert to ISO format for proper sorting
+                date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            except:
+                pass  # Keep original if parsing fails
         
         # Get message ID
         message_id = email_message.get('Message-ID', '')
@@ -9229,8 +9237,12 @@ def open_reply_dialog(email_id):
             # Generate AI reply
             result = generate_ai_email(
                 scenario="Cevap",
-                supplier_data={"name": email_data['from']},
-                context=f"Orijinal email konusu: {email_data['subject']}\nOrijinal içerik: {email_data['body'][:300]}"
+                supplier_name=email_data['from'],
+                supplier_email=email_data.get('from', ''),
+                context_data={
+                    "original_subject": email_data['subject'],
+                    "original_body": email_data['body'][:300]
+                }
             )
             
             if result.get('success'):
