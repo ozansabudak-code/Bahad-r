@@ -23,6 +23,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+import imaplib  # IMAP email reading
+import email  # Email parsing
+from email.header import decode_header  # Email header decoding
+import sqlite3  # Local email database
+import html  # HTML escaping
 import getpass
 import socket
 import math # Matematiksel hesaplamalar için
@@ -8005,6 +8010,274 @@ def send_compliance_email(supplier_email, supplier_name, compliance_data, ai_mes
 
 # ========== END OF AI HELPER FUNCTIONS ==========
 
+# ========== EMAIL INBOX MANAGEMENT (GELEN KUTUSU YÖNETİMİ) ==========
+
+# Email database initialization
+EMAIL_DB_PATH = "email_inbox.db"
+
+def init_email_database():
+    """Initialize SQLite database for email storage"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        # Emails table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT UNIQUE,
+                from_addr TEXT NOT NULL,
+                to_addr TEXT,
+                subject TEXT,
+                body TEXT,
+                html_body TEXT,
+                date TIMESTAMP,
+                read INTEGER DEFAULT 0,
+                replied INTEGER DEFAULT 0,
+                supplier_name TEXT,
+                folder TEXT DEFAULT 'INBOX',
+                raw_email TEXT
+            )
+        ''')
+        
+        # Email threads table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS email_threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT NOT NULL,
+                parent_message_id TEXT,
+                child_message_id TEXT,
+                level INTEGER DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Database init error: {e}")
+        return False
+
+def fetch_emails_from_imap(limit=50):
+    """Fetch emails from Gmail IMAP server"""
+    try:
+        if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+            return [], "Email credentials not configured"
+        
+        # Connect to Gmail IMAP
+        imap = imaplib.IMAP4_SSL('imap.gmail.com')
+        imap.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        imap.select('INBOX')
+        
+        # Search for all emails (or recent ones)
+        status, messages = imap.search(None, 'ALL')
+        if status != 'OK':
+            return [], "Failed to search emails"
+        
+        email_ids = messages[0].split()
+        email_ids = email_ids[-limit:]  # Get last N emails
+        email_ids.reverse()  # Most recent first
+        
+        emails = []
+        for email_id in email_ids:
+            try:
+                status, msg_data = imap.fetch(email_id, '(RFC822)')
+                if status != 'OK':
+                    continue
+                
+                email_body = msg_data[0][1]
+                email_message = email.message_from_bytes(email_body)
+                
+                # Parse email
+                parsed_email = parse_email_message(email_message)
+                if parsed_email:
+                    emails.append(parsed_email)
+                    
+            except Exception as e:
+                print(f"Error parsing email {email_id}: {e}")
+                continue
+        
+        imap.close()
+        imap.logout()
+        
+        return emails, None
+        
+    except Exception as e:
+        return [], f"IMAP error: {str(e)}"
+
+def parse_email_message(email_message):
+    """Parse email message and extract relevant information"""
+    try:
+        # Get subject
+        subject = email_message.get('Subject', '')
+        if subject:
+            decoded_subject = decode_header(subject)[0]
+            if isinstance(decoded_subject[0], bytes):
+                subject = decoded_subject[0].decode(decoded_subject[1] or 'utf-8')
+            else:
+                subject = decoded_subject[0]
+        
+        # Get from address
+        from_addr = email_message.get('From', '')
+        
+        # Get date
+        date_str = email_message.get('Date', '')
+        
+        # Get message ID
+        message_id = email_message.get('Message-ID', '')
+        
+        # Get body
+        body = ""
+        html_body = ""
+        
+        if email_message.is_multipart():
+            for part in email_message.walk():
+                content_type = part.get_content_type()
+                content_disposition = str(part.get('Content-Disposition'))
+                
+                if 'attachment' not in content_disposition:
+                    if content_type == 'text/plain':
+                        try:
+                            body = part.get_payload(decode=True).decode()
+                        except:
+                            body = str(part.get_payload())
+                    elif content_type == 'text/html':
+                        try:
+                            html_body = part.get_payload(decode=True).decode()
+                        except:
+                            html_body = str(part.get_payload())
+        else:
+            try:
+                body = email_message.get_payload(decode=True).decode()
+            except:
+                body = str(email_message.get_payload())
+        
+        return {
+            'message_id': message_id,
+            'from': from_addr,
+            'subject': subject,
+            'date': date_str,
+            'body': body,
+            'html_body': html_body,
+            'read': 0
+        }
+        
+    except Exception as e:
+        print(f"Error parsing email: {e}")
+        return None
+
+def save_email_to_db(email_data):
+    """Save email to local database"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR IGNORE INTO emails 
+            (message_id, from_addr, subject, body, html_body, date, read)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            email_data['message_id'],
+            email_data['from'],
+            email_data['subject'],
+            email_data['body'],
+            email_data['html_body'],
+            email_data['date'],
+            email_data['read']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error saving email: {e}")
+        return False
+
+def get_emails_from_db(limit=100, unread_only=False):
+    """Get emails from local database"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        if unread_only:
+            cursor.execute('''
+                SELECT id, from_addr, subject, date, read, replied 
+                FROM emails 
+                WHERE read = 0
+                ORDER BY date DESC 
+                LIMIT ?
+            ''', (limit,))
+        else:
+            cursor.execute('''
+                SELECT id, from_addr, subject, date, read, replied 
+                FROM emails 
+                ORDER BY date DESC 
+                LIMIT ?
+            ''', (limit,))
+        
+        emails = cursor.fetchall()
+        conn.close()
+        return emails
+    except Exception as e:
+        print(f"Error getting emails: {e}")
+        return []
+
+def get_email_body(email_id):
+    """Get full email body by ID"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT from_addr, subject, body, html_body, date
+            FROM emails 
+            WHERE id = ?
+        ''', (email_id,))
+        
+        email = cursor.fetchone()
+        conn.close()
+        
+        if email:
+            return {
+                'from': email[0],
+                'subject': email[1],
+                'body': email[2],
+                'html_body': email[3],
+                'date': email[4]
+            }
+        return None
+    except Exception as e:
+        print(f"Error getting email body: {e}")
+        return None
+
+def mark_email_as_read(email_id):
+    """Mark email as read"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE emails SET read = 1 WHERE id = ?', (email_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error marking email as read: {e}")
+        return False
+
+def mark_email_as_replied(email_id):
+    """Mark email as replied"""
+    try:
+        conn = sqlite3.connect(EMAIL_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE emails SET replied = 1 WHERE id = ?', (email_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error marking email as replied: {e}")
+        return False
+
+# ========== END OF EMAIL INBOX MANAGEMENT ==========
+
 # ========== AKILLİ EMAIL OTOMASYONU (INTELLIGENT EMAIL AUTOMATION) ==========
 
 def generate_ai_email(scenario, supplier_name, supplier_email, context_data=None):
@@ -8556,6 +8829,442 @@ def init_email_automation_tab():
         email_to_entry.delete(0, "end")
         email_subject_entry.delete(0, "end")
         email_preview_text.delete("1.0", "end")
+
+# ========== EMAIL GELEN KUTUSU (EMAIL INBOX MANAGEMENT) ==========
+
+def init_email_inbox_tab():
+    """Email Gelen Kutusu - View and reply to emails without opening email client"""
+    global email_list_tree, email_viewer_text, selected_email_id
+    
+    # Initialize database
+    init_email_database()
+    
+    for widget in frame_email_inbox.winfo_children():
+        widget.destroy()
+    
+    # Title
+    title_label = tk.Label(
+        frame_email_inbox,
+        text="📥 Email Gelen Kutusu",
+        font=("Segoe UI", 20, "bold"),
+        bg="#f0f0f0"
+    )
+    title_label.pack(pady=(0, 5))
+    
+    subtitle_label = tk.Label(
+        frame_email_inbox,
+        text="Email istemcisini açmadan emaillerinizi görüntüleyin ve yanıtlayın",
+        font=("Segoe UI", 10),
+        bg="#f0f0f0",
+        fg="#666666"
+    )
+    subtitle_label.pack(pady=(0, 10))
+    
+    # Toolbar
+    toolbar_frame = tk.Frame(frame_email_inbox, bg="#f0f0f0")
+    toolbar_frame.pack(fill="x", pady=(0, 10))
+    
+    def refresh_emails():
+        """Fetch new emails from IMAP and refresh list"""
+        try:
+            refresh_btn.config(state="disabled", text="🔄 Yükleniyor...")
+            frame_email_inbox.update()
+            
+            emails, error = fetch_emails_from_imap(limit=50)
+            if error:
+                messagebox.showerror("Hata", f"Email çekme hatası:\n{error}")
+                refresh_btn.config(state="normal", text="🔄 Yenile")
+                return
+            
+            # Save to database
+            saved_count = 0
+            for email_data in emails:
+                if save_email_to_db(email_data):
+                    saved_count += 1
+            
+            # Refresh list
+            load_email_list()
+            
+            messagebox.showinfo("Başarılı", f"{saved_count} yeni email yüklendi!")
+            refresh_btn.config(state="normal", text="🔄 Yenile")
+            
+        except Exception as e:
+            messagebox.showerror("Hata", f"Email yenileme hatası:\n{str(e)}")
+            refresh_btn.config(state="normal", text="🔄 Yenile")
+    
+    refresh_btn = tk.Button(
+        toolbar_frame,
+        text="🔄 Yenile",
+        font=("Segoe UI", 10),
+        bg="#3498db",
+        fg="white",
+        cursor="hand2",
+        command=refresh_emails,
+        padx=15,
+        pady=5
+    )
+    refresh_btn.pack(side="left", padx=5)
+    
+    unread_only_var = tk.IntVar(value=0)
+    unread_check = tk.Checkbutton(
+        toolbar_frame,
+        text="Sadece Okunmamış",
+        variable=unread_only_var,
+        bg="#f0f0f0",
+        font=("Segoe UI", 10),
+        command=lambda: load_email_list()
+    )
+    unread_check.pack(side="left", padx=10)
+    
+    # Main content - split into two panels
+    content_frame = tk.Frame(frame_email_inbox, bg="#f0f0f0")
+    content_frame.pack(fill="both", expand=True)
+    
+    # Left panel - Email list
+    left_panel = tk.Frame(content_frame, bg="white", relief="solid", borderwidth=1)
+    left_panel.pack(side="left", fill="both", expand=False, padx=(0, 5))
+    left_panel.config(width=400)
+    
+    list_label = tk.Label(
+        left_panel,
+        text="📧 Email Listesi",
+        font=("Segoe UI", 12, "bold"),
+        bg="white"
+    )
+    list_label.pack(pady=10)
+    
+    # Email list with Treeview
+    list_frame = tk.Frame(left_panel)
+    list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    list_scroll = tk.Scrollbar(list_frame)
+    list_scroll.pack(side="right", fill="y")
+    
+    email_list_tree = ttk.Treeview(
+        list_frame,
+        columns=("from", "subject", "date"),
+        show="tree headings",
+        yscrollcommand=list_scroll.set,
+        selectmode="browse"
+    )
+    list_scroll.config(command=email_list_tree.yview)
+    
+    email_list_tree.heading("#0", text="")
+    email_list_tree.heading("from", text="Kimden")
+    email_list_tree.heading("subject", text="Konu")
+    email_list_tree.heading("date", text="Tarih")
+    
+    email_list_tree.column("#0", width=30)
+    email_list_tree.column("from", width=150)
+    email_list_tree.column("subject", width=200)
+    email_list_tree.column("date", width=100)
+    
+    email_list_tree.pack(fill="both", expand=True)
+    
+    # Right panel - Email viewer
+    right_panel = tk.Frame(content_frame, bg="white", relief="solid", borderwidth=1)
+    right_panel.pack(side="right", fill="both", expand=True)
+    
+    viewer_label = tk.Label(
+        right_panel,
+        text="📖 Email Görüntüleyici",
+        font=("Segoe UI", 12, "bold"),
+        bg="white"
+    )
+    viewer_label.pack(pady=10)
+    
+    # Email header frame
+    header_frame = tk.Frame(right_panel, bg="white")
+    header_frame.pack(fill="x", padx=10, pady=(0, 10))
+    
+    email_from_label = tk.Label(
+        header_frame,
+        text="Kimden: ",
+        font=("Segoe UI", 10),
+        bg="white",
+        anchor="w"
+    )
+    email_from_label.pack(fill="x")
+    
+    email_subject_label = tk.Label(
+        header_frame,
+        text="Konu: ",
+        font=("Segoe UI", 10, "bold"),
+        bg="white",
+        anchor="w"
+    )
+    email_subject_label.pack(fill="x", pady=(5, 0))
+    
+    email_date_label = tk.Label(
+        header_frame,
+        text="Tarih: ",
+        font=("Segoe UI", 9),
+        bg="white",
+        fg="#666",
+        anchor="w"
+    )
+    email_date_label.pack(fill="x", pady=(2, 0))
+    
+    # Separator
+    separator = tk.Frame(header_frame, bg="#cccccc", height=1)
+    separator.pack(fill="x", pady=10)
+    
+    # Email body viewer
+    viewer_frame = tk.Frame(right_panel)
+    viewer_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    viewer_scroll = tk.Scrollbar(viewer_frame)
+    viewer_scroll.pack(side="right", fill="y")
+    
+    email_viewer_text = tk.Text(
+        viewer_frame,
+        wrap="word",
+        font=("Segoe UI", 10),
+        yscrollcommand=viewer_scroll.set,
+        bg="#f9f9f9",
+        padx=10,
+        pady=10
+    )
+    viewer_scroll.config(command=email_viewer_text.yview)
+    email_viewer_text.pack(fill="both", expand=True)
+    
+    # Action buttons
+    button_frame = tk.Frame(right_panel, bg="white")
+    button_frame.pack(fill="x", padx=10, pady=(0, 10))
+    
+    def reply_to_email():
+        """Open reply dialog"""
+        if not hasattr(init_email_inbox_tab, 'selected_email_id') or not init_email_inbox_tab.selected_email_id:
+            messagebox.showwarning("Uyarı", "Lütfen önce bir email seçin")
+            return
+        
+        open_reply_dialog(init_email_inbox_tab.selected_email_id)
+    
+    reply_btn = tk.Button(
+        button_frame,
+        text="💬 Cevapla",
+        font=("Segoe UI", 10),
+        bg="#27ae60",
+        fg="white",
+        cursor="hand2",
+        command=reply_to_email,
+        padx=20,
+        pady=8
+    )
+    reply_btn.pack(side="left", padx=5)
+    
+    def mark_as_read():
+        """Mark selected email as read"""
+        if hasattr(init_email_inbox_tab, 'selected_email_id') and init_email_inbox_tab.selected_email_id:
+            mark_email_as_read(init_email_inbox_tab.selected_email_id)
+            load_email_list()
+    
+    read_btn = tk.Button(
+        button_frame,
+        text="✓ Okundu",
+        font=("Segoe UI", 10),
+        bg="#95a5a6",
+        fg="white",
+        cursor="hand2",
+        command=mark_as_read,
+        padx=20,
+        pady=8
+    )
+    read_btn.pack(side="left", padx=5)
+    
+    # Email selection handler
+    def on_email_select(event):
+        """Handle email selection"""
+        selection = email_list_tree.selection()
+        if not selection:
+            return
+        
+        item = email_list_tree.item(selection[0])
+        email_id = item['values'][0] if item['values'] else None
+        
+        if not email_id:
+            return
+        
+        # Store selected email ID
+        init_email_inbox_tab.selected_email_id = email_id
+        
+        # Get and display email
+        email_data = get_email_body(email_id)
+        if email_data:
+            email_from_label.config(text=f"Kimden: {email_data['from']}")
+            email_subject_label.config(text=f"Konu: {email_data['subject']}")
+            email_date_label.config(text=f"Tarih: {email_data['date']}")
+            
+            email_viewer_text.config(state="normal")
+            email_viewer_text.delete("1.0", "end")
+            email_viewer_text.insert("1.0", email_data['body'])
+            email_viewer_text.config(state="disabled")
+            
+            # Mark as read
+            mark_email_as_read(email_id)
+    
+    email_list_tree.bind('<<TreeviewSelect>>', on_email_select)
+    
+    def load_email_list():
+        """Load emails from database into tree"""
+        # Clear existing items
+        for item in email_list_tree.get_children():
+            email_list_tree.delete(item)
+        
+        # Get emails
+        unread_only = unread_only_var.get() == 1
+        emails = get_emails_from_db(limit=100, unread_only=unread_only)
+        
+        for email_row in emails:
+            email_id, from_addr, subject, date, read, replied = email_row
+            
+            # Icon based on status
+            icon = "📩" if read == 0 else ("💬" if replied == 1 else "✉️")
+            
+            # Add to tree (store ID in first column)
+            email_list_tree.insert(
+                "",
+                "end",
+                text=icon,
+                values=(email_id, from_addr, subject, date[:16] if date else "")
+            )
+    
+    # Initial load
+    load_email_list()
+
+def open_reply_dialog(email_id):
+    """Open dialog to reply to an email"""
+    email_data = get_email_body(email_id)
+    if not email_data:
+        messagebox.showerror("Hata", "Email verisi alınamadı")
+        return
+    
+    # Create reply dialog
+    reply_window = tk.Toplevel()
+    reply_window.title("Email Cevapla")
+    reply_window.geometry("700x600")
+    reply_window.configure(bg="#f0f0f0")
+    
+    # Title
+    title_label = tk.Label(
+        reply_window,
+        text="💬 Email Cevapla",
+        font=("Segoe UI", 16, "bold"),
+        bg="#f0f0f0"
+    )
+    title_label.pack(pady=10)
+    
+    # To field
+    to_frame = tk.Frame(reply_window, bg="#f0f0f0")
+    to_frame.pack(fill="x", padx=20, pady=5)
+    
+    tk.Label(to_frame, text="Kime:", font=("Segoe UI", 10), bg="#f0f0f0", width=10, anchor="w").pack(side="left")
+    to_entry = tk.Entry(to_frame, font=("Segoe UI", 10))
+    to_entry.pack(side="left", fill="x", expand=True)
+    to_entry.insert(0, email_data['from'])
+    
+    # Subject field
+    subject_frame = tk.Frame(reply_window, bg="#f0f0f0")
+    subject_frame.pack(fill="x", padx=20, pady=5)
+    
+    tk.Label(subject_frame, text="Konu:", font=("Segoe UI", 10), bg="#f0f0f0", width=10, anchor="w").pack(side="left")
+    subject_entry = tk.Entry(subject_frame, font=("Segoe UI", 10))
+    subject_entry.pack(side="left", fill="x", expand=True)
+    
+    # Add Re: if not already present
+    original_subject = email_data['subject']
+    if not original_subject.startswith("Re:"):
+        original_subject = f"Re: {original_subject}"
+    subject_entry.insert(0, original_subject)
+    
+    # Quote original checkbox
+    quote_var = tk.IntVar(value=1)
+    quote_check = tk.Checkbutton(
+        reply_window,
+        text="Orijinal mesajı alıntıla",
+        variable=quote_var,
+        bg="#f0f0f0",
+        font=("Segoe UI", 10)
+    )
+    quote_check.pack(pady=5)
+    
+    # Body text area
+    body_frame = tk.Frame(reply_window)
+    body_frame.pack(fill="both", expand=True, padx=20, pady=10)
+    
+    body_scroll = tk.Scrollbar(body_frame)
+    body_scroll.pack(side="right", fill="y")
+    
+    body_text = tk.Text(
+        body_frame,
+        wrap="word",
+        font=("Segoe UI", 10),
+        yscrollcommand=body_scroll.set
+    )
+    body_scroll.config(command=body_text.yview)
+    body_text.pack(fill="both", expand=True)
+    
+    # Pre-fill with quoted text if checked
+    if quote_var.get():
+        quoted = f"\n\n--- Orijinal Mesaj ---\n{email_data['body']}"
+        body_text.insert("end", quoted)
+    
+    # Buttons
+    button_frame = tk.Frame(reply_window, bg="#f0f0f0")
+    button_frame.pack(fill="x", padx=20, pady=10)
+    
+    def send_reply():
+        """Send the reply email"""
+        to_addr = to_entry.get().strip()
+        subject = subject_entry.get().strip()
+        body = body_text.get("1.0", "end").strip()
+        
+        if not to_addr or not subject or not body:
+            messagebox.showwarning("Uyarı", "Lütfen tüm alanları doldurun")
+            return
+        
+        try:
+            # Send email using existing function
+            success, message = send_email_smtp(to_addr, subject, body)
+            
+            if success:
+                # Mark original as replied
+                mark_email_as_replied(email_id)
+                messagebox.showinfo("Başarılı", "Email başarıyla gönderildi!")
+                reply_window.destroy()
+            else:
+                messagebox.showerror("Hata", message)
+                
+        except Exception as e:
+            messagebox.showerror("Hata", f"Email gönderme hatası:\n{str(e)}")
+    
+    send_btn = tk.Button(
+        button_frame,
+        text="📧 Gönder",
+        font=("Segoe UI", 10, "bold"),
+        bg="#3498db",
+        fg="white",
+        cursor="hand2",
+        command=send_reply,
+        padx=30,
+        pady=10
+    )
+    send_btn.pack(side="left", padx=5)
+    
+    cancel_btn = tk.Button(
+        button_frame,
+        text="❌ İptal",
+        font=("Segoe UI", 10),
+        bg="#95a5a6",
+        fg="white",
+        cursor="hand2",
+        command=reply_window.destroy,
+        padx=30,
+        pady=10
+    )
+    cancel_btn.pack(side="left", padx=5)
+
+# ========== END OF EMAIL GELEN KUTUSU ==========
 
 # ========== DOĞAL DİL SORGU MOTORU (NATURAL LANGUAGE QUERY ENGINE) ==========
 
@@ -10017,6 +10726,9 @@ frame_compliance = ttk.Frame(content_area, padding="10")
 # Akıllı Email Otomasyonu Frame
 frame_email_automation = ttk.Frame(content_area, padding="10")
 
+# Email Gelen Kutusu Frame (Email Inbox)
+frame_email_inbox = ttk.Frame(content_area, padding="10")
+
 # Doğal Dil Sorgu Motoru Frame
 frame_nlq = ttk.Frame(content_area, padding="10")
 
@@ -10055,6 +10767,8 @@ frames = {
     "Tedarikçi Uyumluluk": frame_compliance,
     # Akıllı Email Otomasyonu
     "Akıllı Email": frame_email_automation,
+    # Email Gelen Kutusu
+    "Email Gelen Kutusu": frame_email_inbox,
     # Doğal Dil Sorgu Motoru
     "Doğal Dil Sorguları": frame_nlq
 }
@@ -10065,6 +10779,7 @@ menu_items = [
     ("🛒 Akıllı Sipariş", "Akıllı Sipariş"),
     ("💰 Pazarlık Robotu", "Pazarlık Robotu"), 
     ("📧 Akıllı Email", "Akıllı Email"), # YENİ! Email Otomasyonu
+    ("📥 Email Gelen Kutusu", "Email Gelen Kutusu"), # YENİ! Email Inbox & Reply
     ("🗣️ Doğal Dil Sorguları", "Doğal Dil Sorguları"), # YENİ! EN ÖNEMLİ MODÜL
     ("📰 Sektör Haberleri", "Sektör Haberleri"), # YENİ BUTON
     ("🔮 Trend Avcısı", "Trend Avcısı"), # TREND HUNTER
@@ -10103,6 +10818,7 @@ draw_dashboard(frame_ozet)
 init_map_tab() 
 init_chat_tab() 
 init_email_automation_tab()  # Akıllı Email Otomasyonu - YENİ!
+init_email_inbox_tab()  # Email Gelen Kutusu - Email Inbox & Reply Management!
 init_natural_language_query_tab()  # Doğal Dil Sorgu Motoru - EN ÖNEMLİ MODÜL!
 init_scorecard_tab() 
 init_ocr_tab() 
