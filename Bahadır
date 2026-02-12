@@ -11275,7 +11275,12 @@ init_chat_tab()
 init_email_automation_tab()  # Akıllı Email Otomasyonu - YENİ!
 init_email_inbox_tab()  # Email Gelen Kutusu - Email Inbox & Reply Management!
 init_natural_language_query_tab()  # Doğal Dil Sorgu Motoru - EN ÖNEMLİ MODÜL!
-init_action_recommendations_tab()  # Akıllı Eylem Önerileri - OTOMATIK AKSİYON ÖNERİLERİ!
+try:
+    init_action_recommendations_tab()  # Akıllı Eylem Önerileri - OTOMATIK AKSİYON ÖNERİLERİ!
+except Exception as e:
+    print(f"HATA: Akıllı Eylem Önerileri başlatılamadı: {e}")
+    import traceback
+    traceback.print_exc()
 init_scorecard_tab() 
 init_ocr_tab() 
 init_smart_order_tab() 
