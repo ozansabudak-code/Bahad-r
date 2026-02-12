@@ -9986,6 +9986,11 @@ def display_recommendations(recommendations):
     """Önerileri göster"""
     global action_recommendations_container
     
+    # Check if container exists
+    if action_recommendations_container is None or not action_recommendations_container.winfo_exists():
+        print(f"HATA: Action recommendations container mevcut değil")
+        return
+    
     # Temizle
     for widget in action_recommendations_container.winfo_children():
         widget.destroy()
@@ -10101,6 +10106,11 @@ def display_recommendations(recommendations):
 def display_error(error_msg):
     """Hata mesajı göster"""
     global action_recommendations_container
+    
+    # Check if container exists
+    if action_recommendations_container is None or not action_recommendations_container.winfo_exists():
+        print(f"HATA: Action recommendations container mevcut değil: {error_msg}")
+        return
     
     for widget in action_recommendations_container.winfo_children():
         widget.destroy()
