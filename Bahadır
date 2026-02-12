@@ -8088,6 +8088,15 @@ GÖVDE:
 NOT: Sadece email içeriğini yaz, başka açıklama ekleme."""
 
     try:
+        # Configure Gemini API key before use
+        if not GEMINI_API_KEY or GEMINI_API_KEY.strip() == "":
+            return {
+                "success": False,
+                "error": "GEMINI_API_KEY yapılandırılmamış. Lütfen API anahtarınızı program başındaki GEMINI_API_KEY değişkenine ekleyin."
+            }
+        
+        genai.configure(api_key=GEMINI_API_KEY)
+        
         # Call Gemini API
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         response = model.generate_content(prompt, request_options={"timeout": 60})
