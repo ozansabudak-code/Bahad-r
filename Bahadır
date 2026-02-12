@@ -256,6 +256,9 @@ gantt_canvas_global = None
 commodity_prices_global = {}
 commodity_history_global = {}
 
+# Akıllı Eylem Önerileri Global Değişkenler
+action_recommendations_container = None
+
 # Frame Yönetimi Global Değişkenler
 frames = {} 
 menu_buttons = {} 
