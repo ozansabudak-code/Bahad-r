@@ -9724,6 +9724,385 @@ Yanıtın Türkçe, profesyonel ve anlaşılır olsun."""
 
 # ========== END OF NATURAL LANGUAGE QUERY ENGINE ==========
 
+# ========== AUTOMATIC ACTION RECOMMENDATIONS (AKILLI EYLEM ÖNERİLERİ) ==========
+
+def detect_supplier_problems(data_df):
+    """Tedarikçi problemlerini tespit et"""
+    problems = []
+    
+    if data_df is None or data_df.empty:
+        return problems
+    
+    try:
+        # Teslimat performansı kontrolü
+        if tedarikci_col_global in data_df.columns and 'Teslimat' in data_df.columns:
+            for idx, row in data_df.iterrows():
+                teslimat = row.get('Teslimat', 100)
+                if teslimat < 70:
+                    problems.append({
+                        'type': 'delivery',
+                        'supplier': row.get(tedarikci_col_global, 'Bilinmeyen'),
+                        'value': teslimat,
+                        'threshold': 70,
+                        'severity': 'critical' if teslimat < 50 else 'high'
+                    })
+        
+        # Kalite skoru kontrolü
+        if tedarikci_col_global in data_df.columns and 'Kalite' in data_df.columns:
+            for idx, row in data_df.iterrows():
+                kalite = row.get('Kalite', 100)
+                if kalite < 75:
+                    problems.append({
+                        'type': 'quality',
+                        'supplier': row.get(tedarikci_col_global, 'Bilinmeyen'),
+                        'value': kalite,
+                        'threshold': 75,
+                        'severity': 'critical' if kalite < 60 else 'high'
+                    })
+        
+        # İade oranı kontrolü
+        if tedarikci_col_global in data_df.columns and 'İade Oranı' in data_df.columns:
+            for idx, row in data_df.iterrows():
+                iade = row.get('İade Oranı', 0)
+                if iade > 5:
+                    problems.append({
+                        'type': 'return_rate',
+                        'supplier': row.get(tedarikci_col_global, 'Bilinmeyen'),
+                        'value': iade,
+                        'threshold': 5,
+                        'severity': 'critical' if iade > 10 else 'high'
+                    })
+        
+    except Exception as e:
+        print(f"Problem detection error: {str(e)}")
+    
+    return problems
+
+def generate_action_recommendations(problems):
+    """AI ile aksiyon önerileri oluştur"""
+    if not problems:
+        return []
+    
+    recommendations = []
+    
+    try:
+        # Gemini AI ile öneri oluştur
+        if not GENAI_AVAILABLE or not GEMINI_API_KEY:
+            # Fallback: Basit öneriler
+            for problem in problems[:5]:  # İlk 5 problem
+                if problem['type'] == 'delivery':
+                    recommendations.append({
+                        'problem': f"Teslimat performansı düşük: {problem['supplier']}",
+                        'actions': [
+                            "Alternatif tedarikçi araştır",
+                            "Acil toplantı planla",
+                            "Stok güvenlik seviyelerini artır"
+                        ],
+                        'priority': problem['severity'],
+                        'timeline': 'Hemen'
+                    })
+                elif problem['type'] == 'quality':
+                    recommendations.append({
+                        'problem': f"Kalite skoru düşük: {problem['supplier']}",
+                        'actions': [
+                            "Kalite denetimi planla",
+                            "Üretim sürecini incele",
+                            "Detaylı geri bildirim ver"
+                        ],
+                        'priority': problem['severity'],
+                        'timeline': 'Bu hafta'
+                    })
+                elif problem['type'] == 'return_rate':
+                    recommendations.append({
+                        'problem': f"Yüksek iade oranı: {problem['supplier']}",
+                        'actions': [
+                            "Kök neden analizi yap",
+                            "Kalite kontrol sıkılaştır",
+                            "Tedarikçi eğitimi düzenle"
+                        ],
+                        'priority': problem['severity'],
+                        'timeline': 'Bu hafta'
+                    })
+            return recommendations
+        
+        # AI ile öneri oluştur
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('models/gemini-2.0-flash')
+        
+        for problem in problems[:5]:  # İlk 5 problem için öneri
+            prompt = f"""Tedarikçi performans problemi tespit edildi:
+            
+Problem Tipi: {problem['type']}
+Tedarikçi: {problem['supplier']}
+Mevcut Değer: {problem['value']}
+Hedef Değer: {problem['threshold']}
+Önem: {problem['severity']}
+
+Lütfen bu problem için:
+1. 3-5 spesifik, uygulanabilir aksiyon öner
+2. Öncelik seviyesi belirle (critical/high/medium/low)
+3. Zaman çizelgesi öner
+
+JSON formatında yanıt ver:
+{{
+    "actions": ["aksiyon1", "aksiyon2", ...],
+    "priority": "critical/high/medium/low",
+    "timeline": "Hemen/Bu hafta/Bu ay"
+}}
+"""
+            
+            try:
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    # JSON parse et
+                    import re
+                    json_match = re.search(r'\{[^\}]+\}', response.text, re.DOTALL)
+                    if json_match:
+                        ai_data = json.loads(json_match.group())
+                        recommendations.append({
+                            'problem': f"{problem['type']}: {problem['supplier']} ({problem['value']})",
+                            'actions': ai_data.get('actions', []),
+                            'priority': ai_data.get('priority', problem['severity']),
+                            'timeline': ai_data.get('timeline', 'Bu hafta')
+                        })
+                    else:
+                        # Fallback
+                        recommendations.append({
+                            'problem': f"{problem['type']}: {problem['supplier']}",
+                            'actions': response.text.split('\n')[:3],
+                            'priority': problem['severity'],
+                            'timeline': 'Bu hafta'
+                        })
+            except:
+                # Fallback basit öneri
+                pass
+                
+    except Exception as e:
+        print(f"AI recommendation error: {str(e)}")
+    
+    return recommendations
+
+def init_action_recommendations_tab():
+    """Akıllı Eylem Önerileri - AI-powered automatic action recommendations"""
+    global action_recommendations_container
+    
+    for widget in frame_action_recommendations.winfo_children():
+        widget.destroy()
+    
+    # Başlık
+    title_frame = tk.Frame(frame_action_recommendations, bg="#e74c3c", height=60)
+    title_frame.pack(fill="x", side="top")
+    title_frame.pack_propagate(False)
+    
+    tk.Label(title_frame, text="🎯 Akıllı Eylem Önerileri", 
+             font=("Segoe UI", 18, "bold"), 
+             fg="white", bg="#e74c3c").pack(side="left", padx=20, pady=15)
+    
+    # Yenile butonu
+    refresh_btn = tk.Button(title_frame, text="🔄 Yenile", 
+                           font=("Segoe UI", 10, "bold"),
+                           bg="#c0392b", fg="white",
+                           cursor="hand2",
+                           command=lambda: load_action_recommendations())
+    refresh_btn.pack(side="right", padx=20, pady=10)
+    
+    # Alt başlık
+    subtitle_frame = tk.Frame(frame_action_recommendations, bg="#ecf0f1")
+    subtitle_frame.pack(fill="x")
+    tk.Label(subtitle_frame, 
+             text="AI tedarikçi problemlerini tespit eder ve öncelikli aksiyonlar önerir",
+             font=("Segoe UI", 11), fg="#34495e", bg="#ecf0f1").pack(pady=10)
+    
+    # Scrollable ana konteyner
+    main_canvas = tk.Canvas(frame_action_recommendations, bg="white", highlightthickness=0)
+    main_scrollbar = tk.Scrollbar(frame_action_recommendations, orient="vertical", command=main_canvas.yview)
+    action_recommendations_container = tk.Frame(main_canvas, bg="white")
+    
+    main_canvas.configure(yscrollcommand=main_scrollbar.set)
+    main_scrollbar.pack(side="right", fill="y")
+    main_canvas.pack(side="left", fill="both", expand=True)
+    
+    canvas_frame = main_canvas.create_window((0, 0), window=action_recommendations_container, anchor="nw")
+    
+    def configure_scroll_region(event=None):
+        main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+    
+    action_recommendations_container.bind("<Configure>", configure_scroll_region)
+    
+    # Mouse wheel scroll
+    def on_mousewheel(event):
+        main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    main_canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
+    # İlk yükleme
+    load_action_recommendations()
+    
+    # Activity log
+    if 'activity_logger' in globals():
+        activity_logger.log_activity("Akıllı Eylem Önerileri açıldı", "Actions")
+
+def load_action_recommendations():
+    """Aksiyon önerilerini yükle ve göster"""
+    global action_recommendations_container
+    
+    # Temizle
+    for widget in action_recommendations_container.winfo_children():
+        widget.destroy()
+    
+    # Yükleniyor mesajı
+    loading_label = tk.Label(action_recommendations_container, 
+                            text="🔄 Problemler tespit ediliyor ve öneriler oluşturuluyor...",
+                            font=("Segoe UI", 12), fg="#7f8c8d", bg="white")
+    loading_label.pack(pady=50)
+    
+    def process_recommendations():
+        try:
+            # Problemleri tespit et
+            data_to_analyze = detay_sonuc_global if detay_sonuc_global is not None else df_global
+            problems = detect_supplier_problems(data_to_analyze)
+            
+            # AI önerileri oluştur
+            recommendations = generate_action_recommendations(problems)
+            
+            # UI'ı güncelle
+            action_recommendations_container.after(0, lambda: display_recommendations(recommendations))
+        except Exception as e:
+            action_recommendations_container.after(0, lambda: display_error(str(e)))
+    
+    # Thread'de çalıştır
+    threading.Thread(target=process_recommendations, daemon=True).start()
+
+def display_recommendations(recommendations):
+    """Önerileri göster"""
+    global action_recommendations_container
+    
+    # Temizle
+    for widget in action_recommendations_container.winfo_children():
+        widget.destroy()
+    
+    if not recommendations:
+        no_data_label = tk.Label(action_recommendations_container, 
+                                text="✅ Harika! Şu anda kritik bir problem tespit edilmedi.\nTüm tedarikçiler iyi performans gösteriyor.",
+                                font=("Segoe UI", 14), fg="#27ae60", bg="white",
+                                justify="center")
+        no_data_label.pack(pady=100)
+        return
+    
+    # Önceliklere göre grupla
+    priority_groups = {
+        'critical': {'title': '🔴 KRİTİK EYLEMLER', 'color': '#e74c3c', 'items': []},
+        'high': {'title': '🟠 YÜKSEK ÖNCELİK', 'color': '#e67e22', 'items': []},
+        'medium': {'title': '🟡 ORTA ÖNCELİK', 'color': '#f39c12', 'items': []},
+        'low': {'title': '🟢 DÜŞÜK ÖNCELİK', 'color': '#27ae60', 'items': []}
+    }
+    
+    for rec in recommendations:
+        priority = rec.get('priority', 'medium')
+        if priority in priority_groups:
+            priority_groups[priority]['items'].append(rec)
+    
+    # Her öncelik grubunu göster
+    for priority in ['critical', 'high', 'medium', 'low']:
+        items = priority_groups[priority]['items']
+        if not items:
+            continue
+        
+        # Grup başlığı
+        group_frame = tk.Frame(action_recommendations_container, bg="white")
+        group_frame.pack(fill="x", padx=20, pady=(20, 10))
+        
+        tk.Label(group_frame, 
+                text=f"{priority_groups[priority]['title']} ({len(items)})",
+                font=("Segoe UI", 14, "bold"),
+                fg=priority_groups[priority]['color'],
+                bg="white").pack(anchor="w")
+        
+        # Her öneriyi göster
+        for rec in items:
+            card_frame = tk.Frame(action_recommendations_container, 
+                                bg="#f8f9fa", 
+                                relief="raised", 
+                                bd=1)
+            card_frame.pack(fill="x", padx=30, pady=10)
+            
+            # Problem başlığı
+            problem_frame = tk.Frame(card_frame, bg=priority_groups[priority]['color'])
+            problem_frame.pack(fill="x")
+            
+            tk.Label(problem_frame,
+                    text=f"⚠️ {rec['problem']}",
+                    font=("Segoe UI", 12, "bold"),
+                    fg="white",
+                    bg=priority_groups[priority]['color']).pack(anchor="w", padx=15, pady=10)
+            
+            # Aksiyonlar
+            actions_frame = tk.Frame(card_frame, bg="#f8f9fa")
+            actions_frame.pack(fill="x", padx=15, pady=15)
+            
+            tk.Label(actions_frame,
+                    text="Önerilen Aksiyonlar:",
+                    font=("Segoe UI", 10, "bold"),
+                    fg="#2c3e50",
+                    bg="#f8f9fa").pack(anchor="w")
+            
+            for i, action in enumerate(rec['actions'][:5], 1):  # Max 5 aksiyon
+                action_text = action.strip()
+                if action_text:
+                    tk.Label(actions_frame,
+                            text=f"  {i}. {action_text}",
+                            font=("Segoe UI", 10),
+                            fg="#34495e",
+                            bg="#f8f9fa",
+                            wraplength=600,
+                            justify="left").pack(anchor="w", pady=2)
+            
+            # Alt bilgi
+            info_frame = tk.Frame(card_frame, bg="#ecf0f1")
+            info_frame.pack(fill="x")
+            
+            tk.Label(info_frame,
+                    text=f"⏰ Zaman Çizelgesi: {rec.get('timeline', 'Bu hafta')}",
+                    font=("Segoe UI", 9),
+                    fg="#7f8c8d",
+                    bg="#ecf0f1").pack(side="left", padx=15, pady=8)
+            
+            # Butonlar
+            btn_frame = tk.Frame(info_frame, bg="#ecf0f1")
+            btn_frame.pack(side="right", padx=15, pady=8)
+            
+            complete_btn = tk.Button(btn_frame,
+                                    text="✓ Tamamlandı",
+                                    font=("Segoe UI", 9),
+                                    bg="#27ae60",
+                                    fg="white",
+                                    cursor="hand2",
+                                    command=lambda: messagebox.showinfo("Tamamlandı", "Aksiyon tamamlandı olarak işaretlendi!"))
+            complete_btn.pack(side="left", padx=5)
+            
+            dismiss_btn = tk.Button(btn_frame,
+                                   text="🗑️ Kapat",
+                                   font=("Segoe UI", 9),
+                                   bg="#95a5a6",
+                                   fg="white",
+                                   cursor="hand2",
+                                   command=lambda c=card_frame: c.pack_forget())
+            dismiss_btn.pack(side="left", padx=5)
+
+def display_error(error_msg):
+    """Hata mesajı göster"""
+    global action_recommendations_container
+    
+    for widget in action_recommendations_container.winfo_children():
+        widget.destroy()
+    
+    error_label = tk.Label(action_recommendations_container,
+                          text=f"❌ Hata oluştu:\n{error_msg}",
+                          font=("Segoe UI", 12), fg="#e74c3c", bg="white",
+                          justify="center")
+    error_label.pack(pady=100)
+
+# ========== END OF ACTION RECOMMENDATIONS ==========
+
 def init_compliance_center_tab():
     """Tedarikçi Uyumluluk Merkezi - Tabbed Interface with Supplier List, Manual Entry, and Certificate Tracking"""
     from datetime import datetime
@@ -10792,6 +11171,9 @@ frame_email_inbox = ttk.Frame(content_area, padding="10")
 # Doğal Dil Sorgu Motoru Frame
 frame_nlq = ttk.Frame(content_area, padding="10")
 
+# Akıllı Eylem Önerileri Frame
+frame_action_recommendations = ttk.Frame(content_area, padding="10")
+
 frames = {
     "Yönetim Paneli": frame_ozet,
     "Analiz": frame_analiz,
@@ -10830,7 +11212,9 @@ frames = {
     # Email Gelen Kutusu
     "Email Gelen Kutusu": frame_email_inbox,
     # Doğal Dil Sorgu Motoru
-    "Doğal Dil Sorguları": frame_nlq
+    "Doğal Dil Sorguları": frame_nlq,
+    # Akıllı Eylem Önerileri
+    "Akıllı Eylem Önerileri": frame_action_recommendations
 }
 
 menu_items = [
@@ -10841,6 +11225,7 @@ menu_items = [
     ("📧 Akıllı Email", "Akıllı Email"), # YENİ! Email Otomasyonu
     ("📥 Email Gelen Kutusu", "Email Gelen Kutusu"), # YENİ! Email Inbox & Reply
     ("🗣️ Doğal Dil Sorguları", "Doğal Dil Sorguları"), # YENİ! EN ÖNEMLİ MODÜL
+    ("🎯 Akıllı Eylem Önerileri", "Akıllı Eylem Önerileri"), # YENİ! Otomatik Aksiyon Önerileri
     ("📰 Sektör Haberleri", "Sektör Haberleri"), # YENİ BUTON
     ("🔮 Trend Avcısı", "Trend Avcısı"), # TREND HUNTER
     ("🏭 Reklamasyon Yönetimi", "Reklamasyon Yönetimi"), # YENİ BUTON
@@ -10880,6 +11265,7 @@ init_chat_tab()
 init_email_automation_tab()  # Akıllı Email Otomasyonu - YENİ!
 init_email_inbox_tab()  # Email Gelen Kutusu - Email Inbox & Reply Management!
 init_natural_language_query_tab()  # Doğal Dil Sorgu Motoru - EN ÖNEMLİ MODÜL!
+init_action_recommendations_tab()  # Akıllı Eylem Önerileri - OTOMATIK AKSİYON ÖNERİLERİ!
 init_scorecard_tab() 
 init_ocr_tab() 
 init_smart_order_tab() 
