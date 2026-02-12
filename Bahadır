@@ -8371,7 +8371,7 @@ NOT: Sadece email içeriğini yaz, başka açıklama ekleme."""
         genai.configure(api_key=GEMINI_API_KEY)
         
         # Call Gemini API
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('models/gemini-2.0-flash')
         response = model.generate_content(prompt, request_options={"timeout": 60})
         
         if response and response.text:
