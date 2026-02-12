@@ -8180,8 +8180,9 @@ def save_email_to_db(email_data):
         conn = sqlite3.connect(EMAIL_DB_PATH)
         cursor = conn.cursor()
         
+        # Use INSERT OR REPLACE to update existing emails (handles replies/updates)
         cursor.execute('''
-            INSERT OR IGNORE INTO emails 
+            INSERT OR REPLACE INTO emails 
             (message_id, from_addr, subject, body, html_body, date, read)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
@@ -8884,7 +8885,7 @@ def init_email_inbox_tab():
                 refresh_btn.config(state="normal", text="🔄 Yenile")
                 return
             
-            # Save to database
+            # Save to database (INSERT OR REPLACE handles both new and updated emails)
             saved_count = 0
             for email_data in emails:
                 if save_email_to_db(email_data):
@@ -8893,7 +8894,7 @@ def init_email_inbox_tab():
             # Refresh list
             load_email_list()
             
-            messagebox.showinfo("Başarılı", f"{saved_count} yeni email yüklendi!")
+            messagebox.showinfo("Başarılı", f"{len(emails)} email çekildi, {saved_count} email güncellendi!")
             refresh_btn.config(state="normal", text="🔄 Yenile")
             
         except Exception as e:
@@ -9108,8 +9109,9 @@ def init_email_inbox_tab():
             email_viewer_text.insert("1.0", email_data['body'])
             email_viewer_text.config(state="disabled")
             
-            # Mark as read
+            # Mark as read and refresh list to update icons/filter
             mark_email_as_read(email_id)
+            load_email_list()  # Refresh list after marking as read
     
     email_list_tree.bind('<<TreeviewSelect>>', on_email_select)
     
