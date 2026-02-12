@@ -8238,17 +8238,51 @@ def init_email_automation_tab():
     
     email_supplier_var = tk.StringVar()
     supplier_combo = ttk.Combobox(supplier_frame, textvariable=email_supplier_var, state="readonly", font=("Segoe UI", 10))
-    supplier_combo.pack(fill="x")
+    supplier_combo.pack(side="left", fill="x", expand=True)
     
-    # Get supplier list from data
-    suppliers = []
-    if detay_sonuc_global is not None and not detay_sonuc_global.empty:
-        if tedarikci_col_global in detay_sonuc_global.columns:
-            suppliers = sorted(detay_sonuc_global[tedarikci_col_global].unique().tolist())
+    def refresh_suppliers():
+        """Refresh supplier list from available data sources"""
+        suppliers = []
+        
+        # Try sonuc_global first (main analysis results)
+        if sonuc_global is not None and not sonuc_global.empty:
+            if tedarikci_col_global and tedarikci_col_global in sonuc_global.columns:
+                suppliers = sorted(sonuc_global[tedarikci_col_global].unique().tolist())
+        
+        # Fallback to detay_sonuc_global
+        if not suppliers and detay_sonuc_global is not None and not detay_sonuc_global.empty:
+            if tedarikci_col_global and tedarikci_col_global in detay_sonuc_global.columns:
+                suppliers = sorted(detay_sonuc_global[tedarikci_col_global].unique().tolist())
+        
+        # Fallback to df_global (raw data)
+        if not suppliers and df_global is not None and not df_global.empty:
+            if tedarikci_col_global and tedarikci_col_global in df_global.columns:
+                suppliers = sorted(df_global[tedarikci_col_global].unique().tolist())
+        
+        # Update combobox
+        if suppliers:
+            supplier_combo['values'] = suppliers
+            supplier_combo.current(0)
+            return len(suppliers)
+        else:
+            supplier_combo['values'] = ["Tedarikçi bulunamadı - Lütfen önce analiz yapın"]
+            return 0
     
-    supplier_combo['values'] = suppliers if suppliers else ["Tedarikçi bulunamadı"]
-    if suppliers:
-        supplier_combo.current(0)
+    # Refresh button
+    refresh_btn = tk.Button(
+        supplier_frame,
+        text="🔄",
+        font=("Segoe UI", 10),
+        bg="#3498db",
+        fg="white",
+        cursor="hand2",
+        command=lambda: messagebox.showinfo("Tedarikçi Listesi", f"{refresh_suppliers()} tedarikçi yüklendi."),
+        width=3
+    )
+    refresh_btn.pack(side="right", padx=(5, 0))
+    
+    # Initial load
+    refresh_suppliers()
     
     # Context fields (dynamic based on scenario)
     tk.Label(left_panel, text="Detaylar:", font=("Segoe UI", 10, "bold"), bg="white").pack(anchor="w", padx=15, pady=(15, 5))
