@@ -9941,7 +9941,7 @@ def init_action_recommendations_tab():
     load_action_recommendations()
     
     # Activity log
-    if 'activity_logger' in globals():
+    if 'activity_logger' in globals() and activity_logger is not None:
         activity_logger.log_activity("Akıllı Eylem Önerileri açıldı", "Actions")
 
 def load_action_recommendations():
